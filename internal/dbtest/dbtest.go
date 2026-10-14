@@ -28,6 +28,26 @@ import (
 // EnvDSN es la variable de entorno que activa las pruebas de integración de BD.
 const EnvDSN = "REPORTES_TEST_DB"
 
+// Serializar toma un lock de sesión de Postgres (pg_advisory_lock) para que las
+// pruebas de integración de DISTINTOS paquetes, que comparten una sola base, no
+// corran a la vez y se pisen el esquema o el rol (go test corre los paquetes en
+// paralelo). El lock se libera al cerrar la conexión dedicada, en el Cleanup de
+// la prueba. Toda prueba de integración de reportes debe tomar este mismo lock.
+func Serializar(t *testing.T, ctx context.Context) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, DSN(t))
+	if err != nil {
+		t.Fatalf("dbtest: conectar para serializar: %v", err)
+	}
+	// Clave arbitraria pero COMPARTIDA por todas las pruebas de integración de
+	// reportes; cualquier otra que toque la misma base debe tomar esta misma.
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(727225)"); err != nil {
+		_ = conn.Close(ctx)
+		t.Fatalf("dbtest: tomar lock de serialización: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) }) // cerrar la conexión libera el lock
+}
+
 // DSN devuelve el DSN de administración, o salta la prueba si no está definido.
 func DSN(t *testing.T) string {
 	t.Helper()

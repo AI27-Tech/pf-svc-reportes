@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## 2026:10:14 (hora local) — alinear la promoción al estándar de los backends
+
+**Resumen:** reportes adopta el mismo par de workflows de promoción que ya usan los otros repos de backend (`pf-svc-catalogos`, `pf-svc-operacion`, `pf-svc-identidad`, `pf-svc-bff`, `pf-svc-core`, `pf-pkg-platform-go`): `promotion-pr-dq.yml` y `promotion-pr-qm.yml`, ambos con **merge manual**. Reemplaza la propuesta previa de auto-merge en `q→m` (PR #13, `automerge-promotion.yml`), que divergía del estándar: el último salto a producción se decide y se clickea a mano, como en el resto.
+
+**Cambios:**
+- `.github/workflows/promotion-pr-dq.yml` (nuevo): mantiene abierto y al día el PR `pf-rep-d → pf-rep-q`. No fusiona; la promoción `d→q` es manual.
+- `.github/workflows/promotion-pr-qm.yml` (nuevo): mantiene abierto y al día el PR `pf-rep-q → pf-rep-m`. No fusiona; la promoción a producción es manual.
+- Ambos archivos son byte-idénticos a los de los demás backends (derivan la rama destino del sufijo, sin prefijos hardcodeados). `ci.yml` (build/vet/test/arch-test) no cambia: ya estaba alineado.
+
+**Nota:** este cambio supone descartar el PR #13 (auto-merge `q→m`) sin fusionarlo; se cierra en favor del par estándar.
+
+**Verificado:** los dos workflows `diff`-idénticos a los de `pf-svc-catalogos`. YAML válido (mismo contenido ya en producción en 6 repos). No toca código Go.
+
+**Archivos modificados:**
+- `.github/workflows/promotion-pr-dq.yml`, `.github/workflows/promotion-pr-qm.yml`
+- `CHANGELOG.md`
+
+## 2026:10:14 (hora local)
+
+**Resumen:** E6-T1, lado escritura de la proyección de reportes (plan `.scratch/reportes-proyeccion-e6-t1`). reportes pasa a ser el primer consumidor durable real del sistema: se suscribe al bus, consume los 4 eventos `viaje.*` que `operacion` publica hoy y puebla `hecho_viaje`/`hecho_transicion`, con idempotencia por `inbox_evento`. Habilita las pruebas 4 y 8 del gate G2 (quedan para un slice posterior). Pasos 1 y 2 del plan; el paso 3 (core inyecta el Subscriber) va en PR aparte en `pf-svc-core`.
+
+**Cambios:**
+- `internal/proyeccionpg/`: adaptador Postgres de los puertos `Proyeccion`/`Inbox`/`DLQ` del consumidor, contra el pool de `svc_reportes`. `Aplicar` abre una tx, proyecta por tipo y registra el `evento_id` en `inbox_evento` en la MISMA tx (atomicidad vía `inbox.Registrar`, idempotencia por la PK); `Marcar` queda no-op. Decodificador `bus.Sobre -> consumidores.Evento` (payload JSON crudo). Mapeo por tipo: `viaje.creado` INSERT (`tenant_id = cliente_id`, DEC-495/DEC-049), `viaje.estado_cambiado` UPDATE estado + INSERT transición (tenant leído de `hecho_viaje`), `viaje.asignado`/`.reasignado` UPDATE `unidades_ids`. El borde "transición/asignación sin creado previo" devuelve `ErrTenantDesconocido` para que el bus lo cuarentene en vez de ponchar tenant (ADR 29). La DLQ del consumidor registra metadatos sanitizados en log (ADR 29 §4); la cuarentena de transporte la lleva el bus.
+- `migrations/reportes/0003_hecho_viaje_unidades.sql`: agrega `hecho_viaje.unidades_ids UUID[]` para proyectar la escolta tal como llega (ADR 31 / DEC-044; los campos viejos `unidad_id`/`custodios_ids` quedaron `reserved` en el proto). Sin grant nuevo: una columna hereda los privilegios de su tabla. `unidad_id`/`custodios_ids` quedan como columnas muertas (deuda nombrada, su retiro es un refactor aparte).
+- `reportes.go`: `Deps.Subscriber bus.Subscriber`; `New()` construye el consumidor durable y lo suscribe a la superficie amplia con los 4 tipos `viaje.*` con productor cuando hay Subscriber; `Workers()` lo devuelve (antes devolvía nil). El handler acusa (nil) un `ErrEventoVenenoso` ya cuarentenado por el consumidor y propaga el resto para que el bus reintente/cuarentene.
+- `internal/dbtest/dbtest.go`: `Serializar` (pg_advisory_lock) para que las pruebas de integración de distintos paquetes no se pisen la base. `grants_integration_test.go` y la prueba nueva lo toman.
+
+**Fuera de alcance (nombrado):** `hecho_condicion` y `cerrado_en` (sin productor aún: `viaje.cerrado`/`condicion.*` son E1-T5..T9); lectura HTTP (R3); paso 3 (core) y paso 4 (gate G2).
+
+**Verificado:** gofmt limpio, `go vet ./...`, `go build ./...`, `go build ./cmd/api` (I5), arch-test@v0.1.1 OK. `go test ./...` con `REPORTES_TEST_DB` apuntando a un Postgres local: la prueba de integración del adaptador (4 eventos pueblan su fila, duplicado no duplica, dos tenants no se mezclan, borde sin creado va a `ErrTenantDesconocido`), `TestGrants` con la 0003, y la de `Workers()`. Suite estable en paralelo tras `Serializar` (3 corridas con `-count=1`). Sin DB, las de integración se saltan.
+
+**Archivos modificados:**
+- `reportes.go`
+- `migrations/reportes/0003_hecho_viaje_unidades.sql`
+- `internal/proyeccionpg/{decodificador.go,adaptador.go,adaptador_integration_test.go}`
+- `internal/dbtest/dbtest.go`, `migrations/grants_integration_test.go`
+- `workers_test.go`
+
 ## 2026:10:07 16:25
 
 **Resumen:** Se exporta `PresupuestoRevocacion` para la arista restringida a `identidad` (RevocacionPort), por la obligación I3. Brecha detectada al cablear el prompt 09: el adaptador EN PROCESO de `pf-svc-core` para la revocación no tenía de dónde leer el presupuesto, porque el consumidor no lo exportaba.
