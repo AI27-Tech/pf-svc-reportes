@@ -27,11 +27,16 @@ package reportes
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 
 	repclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/reportes"
+	"github.com/AI27-Tech/pf-pkg-platform-go/bus"
 	"github.com/AI27-Tech/pf-pkg-platform-go/pgxpool"
 	"github.com/AI27-Tech/pf-pkg-platform-go/worker"
+	"github.com/AI27-Tech/pf-svc-reportes/internal/consumidores"
+	"github.com/AI27-Tech/pf-svc-reportes/internal/proyeccionpg"
 )
 
 // Pools agrupa los pools por rol que el módulo necesita. reportes usa un solo
@@ -50,20 +55,63 @@ type Deps struct {
 	// Revocacion es la arista restringida a identidad (DEC-051). Opcional en el
 	// esqueleto; sin ella la autorización corre sin proyección de tombstones.
 	Revocacion RevocacionPort
+	// Subscriber es el bus durable del que reportes consume los eventos viaje.*
+	// para poblar sus proyecciones (ADR 29). Nil en arranque standalone sin bus:
+	// en ese caso Workers() no arranca el consumidor de proyecciones.
+	Subscriber bus.Subscriber
 }
 
 // Module es la instancia construida del módulo reportes.
 type Module struct {
 	pools Pools
 	deps  Deps
-	// Aquí vivirán la puerta de presupuesto, las proyecciones y los consumidores
-	// cuando se implementen.
+	// consumidor de proyecciones (viaje.* -> hecho_*). Nil sin Subscriber
+	// (standalone sin bus); en ese caso Workers() no lo devuelve.
+	consumidorProyecciones worker.Worker
+}
+
+// tiposViajeConProductor son los eventos viaje.* que operacion publica hoy y que
+// reportes proyecta (E6-T1). Los otros tipos registrados en el consumidor
+// (viaje.cerrado, condicion_abierta/_cerrada) no tienen productor aún: no se
+// suscriben para no abrir un durable que nunca recibe.
+var tiposViajeConProductor = []string{
+	"viaje.creado",
+	"viaje.estado_cambiado",
+	"viaje.asignado",
+	"viaje.reasignado",
 }
 
 // New recibe el pool de svc_reportes y los puertos ya resueltos. No lee entorno
-// (00 regla 4): la raíz cablea todo.
+// (00 regla 4): la raíz cablea todo. Si Deps.Subscriber está presente, construye
+// el consumidor durable de proyecciones sobre el pool de svc_reportes y lo deja
+// listo para que Workers() lo devuelva.
 func New(p Pools, d Deps) (*Module, error) {
-	return &Module{pools: p, deps: d}, nil
+	m := &Module{pools: p, deps: d}
+
+	if d.Subscriber != nil {
+		ad := proyeccionpg.New(p.Reportes, slog.Default())
+		cons := consumidores.NewConsumidorProyecciones(ad, ad, ad)
+		// El handler decodifica el Sobre y lo procesa. Un evento venenoso ya quedó
+		// en cuarentena del consumidor (ErrEventoVenenoso): se acusa (nil) para no
+		// reintentarlo en el bus. Cualquier otro error se propaga para que el bus
+		// reintente y, agotados los reintentos, lo cuarentene (ADR 29): así el
+		// borde de arranque en frío (estado_cambiado sin creado) se reintenta y
+		// termina en cuarentena en vez de ponchar un tenant.
+		handler := func(ctx context.Context, s bus.Sobre) error {
+			err := cons.Procesar(ctx, proyeccionpg.Decodificar(s))
+			if errors.Is(err, consumidores.ErrEventoVenenoso) {
+				return nil
+			}
+			return err
+		}
+		w, err := d.Subscriber.Subscribe("reportes", bus.SensibilidadAmplia, tiposViajeConProductor, handler)
+		if err != nil {
+			return nil, err
+		}
+		m.consumidorProyecciones = w
+	}
+
+	return m, nil
 }
 
 // Routes monta las rutas HTTP del módulo bajo /api/v1/reportes/... en el mux
@@ -79,17 +127,18 @@ func (m *Module) Routes(mux *http.ServeMux) {
 }
 
 // Workers devuelve los workers embebidos del módulo (ADR 29 §6), cada uno con el
-// rol y pool de svc_reportes: (1) el consumidor de proyecciones, (2) el
-// consumidor de sesion.revocada (suscripción durable propia, DEC-057), y (3) el
-// reconciliador (comparación periódica proyección contra origen) como esqueleto,
-// porque su fuente de comparación depende de la reconstrucción (R12). Ningún
-// worker transversal ni acceso a esquemas ajenos.
+// rol y pool de svc_reportes. En E6-T1 devuelve el consumidor durable de
+// proyecciones cuando la raíz inyectó un Subscriber (Deps.Subscriber); sin bus
+// (arranque standalone) la lista va vacía.
 //
-// Scaffolding: hoy devuelve una lista vacía. Los consumidores se cablean cuando
-// la raíz inyecte el adaptador de bus (bus/memory en desarrollo; broker real en
-// espera de ADR 32) y cada suscripción durable propia exista.
+// Pendientes (no en este slice): el consumidor de sesion.revocada (suscripción
+// durable propia, DEC-057) y el reconciliador (R12).
 func (m *Module) Workers() []worker.Worker {
-	return nil
+	var ws []worker.Worker
+	if m.consumidorProyecciones != nil {
+		ws = append(ws, m.consumidorProyecciones)
+	}
+	return ws
 }
 
 // Consultas expone los casos de uso que bff consume en proceso (arista síncrona

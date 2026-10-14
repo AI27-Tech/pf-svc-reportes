@@ -38,6 +38,8 @@ func TestGrants(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	dbtest.Serializar(t, ctx) // no correr a la vez que las demás pruebas de integración (misma base)
+
 	admin, closeAdmin := dbtest.AdminConn(t, ctx)
 	defer closeAdmin()
 
