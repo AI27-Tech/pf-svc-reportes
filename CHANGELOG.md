@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 2026:10:14 (hora local) — alinear la promoción al estándar de los backends
+
+**Resumen:** reportes adopta el mismo par de workflows de promoción que ya usan los otros repos de backend (`pf-svc-catalogos`, `pf-svc-operacion`, `pf-svc-identidad`, `pf-svc-bff`, `pf-svc-core`, `pf-pkg-platform-go`): `promotion-pr-dq.yml` y `promotion-pr-qm.yml`, ambos con **merge manual**. Reemplaza la propuesta previa de auto-merge en `q→m` (PR #13, `automerge-promotion.yml`), que divergía del estándar: el último salto a producción se decide y se clickea a mano, como en el resto.
+
+**Cambios:**
+- `.github/workflows/promotion-pr-dq.yml` (nuevo): mantiene abierto y al día el PR `pf-rep-d → pf-rep-q`. No fusiona; la promoción `d→q` es manual.
+- `.github/workflows/promotion-pr-qm.yml` (nuevo): mantiene abierto y al día el PR `pf-rep-q → pf-rep-m`. No fusiona; la promoción a producción es manual.
+- Ambos archivos son byte-idénticos a los de los demás backends (derivan la rama destino del sufijo, sin prefijos hardcodeados). `ci.yml` (build/vet/test/arch-test) no cambia: ya estaba alineado.
+
+**Nota:** este cambio supone descartar el PR #13 (auto-merge `q→m`) sin fusionarlo; se cierra en favor del par estándar.
+
+**Verificado:** los dos workflows `diff`-idénticos a los de `pf-svc-catalogos`. YAML válido (mismo contenido ya en producción en 6 repos). No toca código Go.
+
+**Archivos modificados:**
+- `.github/workflows/promotion-pr-dq.yml`, `.github/workflows/promotion-pr-qm.yml`
+- `CHANGELOG.md`
+
 ## 2026:10:14 (hora local)
 
 **Resumen:** E6-T1, lado escritura de la proyección de reportes (plan `.scratch/reportes-proyeccion-e6-t1`). reportes pasa a ser el primer consumidor durable real del sistema: se suscribe al bus, consume los 4 eventos `viaje.*` que `operacion` publica hoy y puebla `hecho_viaje`/`hecho_transicion`, con idempotencia por `inbox_evento`. Habilita las pruebas 4 y 8 del gate G2 (quedan para un slice posterior). Pasos 1 y 2 del plan; el paso 3 (core inyecta el Subscriber) va en PR aparte en `pf-svc-core`.
