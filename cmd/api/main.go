@@ -4,14 +4,15 @@
 // y probar el módulo de forma aislada.
 //
 // Scaffolding: abre el pool de svc_reportes (si hay cadena de conexión),
-// construye el módulo con el adaptador HTTP de catalogos y sirve health/ready.
-// Aún no monta rutas de negocio (bloqueadas por R3) ni arranca workers.
+// construye el módulo con el adaptador HTTP de catalogos y monta las lecturas
+// de reportes (E6-T2). Aún no arranca workers (standalone sin bus).
 package main
 
 import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/AI27-Tech/pf-pkg-platform-go/config"
 	"github.com/AI27-Tech/pf-pkg-platform-go/observability"
@@ -26,6 +27,9 @@ import (
 const (
 	envDBReportes    = "DB_REPORTES_URL"
 	envCatalogosBase = "CATALOGOS_BASE_URL"
+	// envTechoFrescura es el umbral de retraso para marcar un reporte stale
+	// (reportes.md (i)). Configuración del servicio, no del contrato.
+	envTechoFrescura = "REPORTES_TECHO_FRESCURA"
 )
 
 func main() {
@@ -72,7 +76,10 @@ func run() error {
 		return err
 	}
 
-	mod, err := reportes.New(reportes.Pools{Reportes: pool}, reportes.Deps{Catalogos: cat})
+	mod, err := reportes.New(reportes.Pools{Reportes: pool}, reportes.Deps{
+		Catalogos:     cat,
+		TechoFrescura: config.GetEnvDuration(envTechoFrescura, 60*time.Second),
+	})
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## 2026:10:17 00:40 — lecturas HTTP con marca de frescura (E6-T2)
+
+**Resumen:** Se montan las dos lecturas de reportes, `GET /api/v1/reportes/viajes` y `GET /api/v1/reportes/estados`, sobre las proyecciones ya pobladas (E6-T1). Cada respuesta declara su marca de frescura (`proyeccion_al` + `stale`), que era la brecha R3 que las bloqueaba. El contrato la añadió en tracer.10.
+
+**Contexto:** `reportes` es una proyección por eventos (ADR 18): puede ir atrasada, así que la respuesta debe declarar hasta qué momento aplicó eventos (`reportes.md` (i)). El techo de frescura que decide `stale` es configuración del servicio (`REPORTES_TECHO_FRESCURA`, default 60s en standalone), no del contrato.
+
+**Pin de contrato (shortcut):** `pf-pkg-contracts` queda pineado por **pseudo-versión** al commit de tracer.10 en `pf-contracts-d` (PR #38, aún sin tag). Subir a `v0.1.0-tracer.10` en cuanto el tag se publique, y ANTES de que reportes promueva a `-m` (git-workflow §7).
+
+**Cambios:**
+- `internal/proyecciones/proyecciones.go`: `Lector` con `Viajes` y `Estados` sobre el pool `svc_reportes`, filtrando por tenant antes de agregar (P9); `frescura()` deriva `proyeccion_al` de `MAX(hecho_viaje.aplicado_hasta)` y `stale` contra el techo configurable.
+- `reportes.go`: `Routes` monta las dos rutas delegando en `Consultas()` (I3); `ConsultasAPI` implementada (ya no devuelve "no implementado"); `tenantDe` saca el tenant del sujeto autenticado (DEC-495); helpers `escribirJSON`/`escribirError`/`codigoDe` portados del patrón de catalogos; `Deps.TechoFrescura` nuevo.
+- `cmd/api/main.go`: cablea `TechoFrescura` desde `REPORTES_TECHO_FRESCURA`.
+- `errores.go`: eliminado (su único símbolo `errNoImplementado` quedó sin uso).
+- Pruebas de integración del `Lector` contra Postgres real: lecturas, aislamiento de tenant, frescura no-stale, stale y tenant sin datos.
+
+**Verificado:** `go build`/`vet` en verde; `gofmt` limpio; `arch-test OK` (única arista saliente: identidad); la suite de integración (`TestLector` + el preexistente `TestProyeccion`) pasa contra Postgres 16 efímero.
+
+**Archivos modificados:**
+- `reportes.go`, `cmd/api/main.go`, `go.mod`, `go.sum`
+- `internal/proyecciones/proyecciones.go`, `internal/proyecciones/proyecciones_integration_test.go`, `internal/proyecciones/export_test.go`
+- `errores.go` (eliminado)
+- `CHANGELOG.md`
+
 ## 2026:10:14 (hora local) — alinear la promoción al estándar de los backends
 
 **Resumen:** reportes adopta el mismo par de workflows de promoción que ya usan los otros repos de backend (`pf-svc-catalogos`, `pf-svc-operacion`, `pf-svc-identidad`, `pf-svc-bff`, `pf-svc-core`, `pf-pkg-platform-go`): `promotion-pr-dq.yml` y `promotion-pr-qm.yml`, ambos con **merge manual**. Reemplaza la propuesta previa de auto-merge en `q→m` (PR #13, `automerge-promotion.yml`), que divergía del estándar: el último salto a producción se decide y se clickea a mano, como en el resto.
