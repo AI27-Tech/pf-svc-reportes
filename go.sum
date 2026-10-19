@@ -1,5 +1,5 @@
-github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.3 h1:4q/d3kvvlZfjEQ8vIFApfE2PqbkihQaWIW5U6Mo7lLo=
-github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.3/go.mod h1:JlGX2WLFfC1+gxIhO+I47U002vqxhrjgCKXZZ4+wmY8=
+github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.10 h1:b/eP/cDgpqs0to6EctJmJOE9QqWqnvqszYph8QCKqZw=
+github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.10/go.mod h1:JlGX2WLFfC1+gxIhO+I47U002vqxhrjgCKXZZ4+wmY8=
 github.com/AI27-Tech/pf-pkg-platform-go v0.1.0 h1:PVUKOf7CYKN2OYVN/URsFJDNo4tJvmP8eX6BNIHza+c=
 github.com/AI27-Tech/pf-pkg-platform-go v0.1.0/go.mod h1:/8N1KhHZMQhXy/+fA3HJXgSuKJHrohMe0+LGi2FjJPI=
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
@@ -18,6 +18,8 @@ github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
 github.com/go-logr/stdr v1.2.2/go.mod h1:mMo/vtBO5dYbehREoey6XUKy/eSumjCCveDpRre4VKE=
+github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
+github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
 github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
