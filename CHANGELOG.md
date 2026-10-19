@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026:10:19 — fijar el pin de contrato al tag tracer.10 (E6-T2)
+
+**Resumen:** Se sube el pin de `pf-pkg-contracts` de la pseudo-versión al commit de `tracer.10` (PR #38, antes sin tag) al **tag publicado `v0.1.0-tracer.10`**. Cierra el `shortcut` que dejó el commit anterior: la regla git-workflow §7 exige que reportes no promueva a `-m` apuntando a un commit de rama `-d`, y el tag ya existe. `tracer.11` no toca `reportes`, por eso el pin se queda en `tracer.10`.
+
+**Cambios:**
+- `go.mod`: pin a `v0.1.0-tracer.10`; se retira el comentario de `shortcut`.
+- `go.sum`: `go mod tidy`.
+
+**Verificado:** `go build`/`vet` en verde; `gofmt` limpio; `arch-test OK`; suite completa (unit + integración con Postgres local) en verde.
+
 ## 2026:10:17 00:40 — lecturas HTTP con marca de frescura (E6-T2)
 
 **Resumen:** Se montan las dos lecturas de reportes, `GET /api/v1/reportes/viajes` y `GET /api/v1/reportes/estados`, sobre las proyecciones ya pobladas (E6-T1). Cada respuesta declara su marca de frescura (`proyeccion_al` + `stale`), que era la brecha R3 que las bloqueaba. El contrato la añadió en tracer.10.

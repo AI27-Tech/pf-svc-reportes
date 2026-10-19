@@ -9,12 +9,11 @@ go 1.27
 // identidad para revocación (DEC-051), ambas HTTP vía cliente generado, que no
 // implican requerir esos módulos.
 //
-// shortcut: el pin de contracts es una pseudo-versión al commit de tracer.10 en
-// pf-contracts-d (PR #38, aún sin tag). Subir a v0.1.0-tracer.10 en cuanto el
-// tag se publique, y ANTES de que reportes promueva a -m (git-workflow §7; mismo
-// patrón que el Paso 3 de E6-T1 para core).
+// El pin de contracts es v0.1.0-tracer.10, la ola que añadió la marca de
+// frescura (proyeccion_al/stale) a reporteViajes/reporteEstados (R3, PR #38):
+// es la que desbloquea las lecturas de E6-T2. tracer.11 no toca reportes.
 require (
-	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.3.0.20261017000903-1b7bcce1b964
+	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.10
 	github.com/AI27-Tech/pf-pkg-platform-go v0.1.0
 	github.com/jackc/pgx/v5 v5.11.0
 )
