@@ -27,17 +27,34 @@ package reportes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	repclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/reportes"
+	"github.com/AI27-Tech/pf-pkg-platform-go/auth"
 	"github.com/AI27-Tech/pf-pkg-platform-go/bus"
+	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 	"github.com/AI27-Tech/pf-pkg-platform-go/pgxpool"
 	"github.com/AI27-Tech/pf-pkg-platform-go/worker"
 	"github.com/AI27-Tech/pf-svc-reportes/internal/consumidores"
+	"github.com/AI27-Tech/pf-svc-reportes/internal/proyecciones"
 	"github.com/AI27-Tech/pf-svc-reportes/internal/proyeccionpg"
 )
+
+// tenantDe extrae el tenant del sujeto autenticado (DEC-495: el cliente/tenant
+// se deriva del usuario, no se captura). Toda lectura filtra por este tenant
+// ANTES de agregar (P9). Sin claims en el contexto, la petición no está
+// autenticada: se rechaza, no se sirve un reporte sin acotar.
+func tenantDe(ctx context.Context) (string, error) {
+	claims := auth.ClaimsFromContext(ctx)
+	if claims == nil || claims.TenantID == "" {
+		return "", platformerrors.NewNoAutorizado("reportes: petición sin tenant autenticado")
+	}
+	return claims.TenantID, nil
+}
 
 // Pools agrupa los pools por rol que el módulo necesita. reportes usa un solo
 // esquema y un solo rol (`svc_reportes`), así que recibe un único pool (00 regla
@@ -59,12 +76,18 @@ type Deps struct {
 	// para poblar sus proyecciones (ADR 29). Nil en arranque standalone sin bus:
 	// en ese caso Workers() no arranca el consumidor de proyecciones.
 	Subscriber bus.Subscriber
+	// TechoFrescura es el umbral de retraso a partir del cual un reporte se marca
+	// `stale` (reportes.md (i)). Es configuración del servicio, no del contrato.
+	// Cero o negativo desactiva la marca (nunca stale): default de desarrollo, no
+	// una decisión de producto.
+	TechoFrescura time.Duration
 }
 
 // Module es la instancia construida del módulo reportes.
 type Module struct {
-	pools Pools
-	deps  Deps
+	pools  Pools
+	deps   Deps
+	lector *proyecciones.Lector
 	// consumidor de proyecciones (viaje.* -> hecho_*). Nil sin Subscriber
 	// (standalone sin bus); en ese caso Workers() no lo devuelve.
 	consumidorProyecciones worker.Worker
@@ -87,6 +110,7 @@ var tiposViajeConProductor = []string{
 // listo para que Workers() lo devuelva.
 func New(p Pools, d Deps) (*Module, error) {
 	m := &Module{pools: p, deps: d}
+	m.lector = proyecciones.NewLector(p.Reportes, d.TechoFrescura)
 
 	if d.Subscriber != nil {
 		ad := proyeccionpg.New(p.Reportes, slog.Default())
@@ -121,9 +145,96 @@ func New(p Pools, d Deps) (*Module, error) {
 // (reportes.md (i)): sin ella no se monta la ruta. Las demás rutas
 // (/cumplimiento, /flota, /exportaciones) no existen en el contrato (R4–R6).
 func (m *Module) Routes(mux *http.ServeMux) {
-	// TODO(reportes): montar reporteViajes y reporteEstados cuando R3 (frescura
-	// contractual) exista, delegando en los mismos casos de uso que Consultas()
-	// (I3). No montar /cumplimiento, /flota ni /exportaciones hasta R4–R6.
+	q := m.Consultas()
+
+	// GET /api/v1/reportes/viajes?desde&hasta — reporte de viajes del periodo.
+	mux.HandleFunc("GET /api/v1/reportes/viajes", func(w http.ResponseWriter, r *http.Request) {
+		desde, hasta, err := parsearPeriodo(r)
+		if err != nil {
+			escribirError(w, err)
+			return
+		}
+		rep, err := q.ReporteViajes(r.Context(), repclient.ReporteViajesParams{Desde: desde, Hasta: hasta})
+		if err != nil {
+			escribirError(w, err)
+			return
+		}
+		escribirJSON(w, http.StatusOK, rep)
+	})
+
+	// GET /api/v1/reportes/estados?desde&hasta — distribución por estado.
+	mux.HandleFunc("GET /api/v1/reportes/estados", func(w http.ResponseWriter, r *http.Request) {
+		desde, hasta, err := parsearPeriodo(r)
+		if err != nil {
+			escribirError(w, err)
+			return
+		}
+		rep, err := q.ReporteEstados(r.Context(), repclient.ReporteEstadosParams{Desde: desde, Hasta: hasta})
+		if err != nil {
+			escribirError(w, err)
+			return
+		}
+		escribirJSON(w, http.StatusOK, rep)
+	})
+
+	// Las demás rutas (/cumplimiento, /flota, /exportaciones) no existen en el
+	// contrato (R4–R6): no se montan.
+}
+
+// parsearPeriodo lee los query params obligatorios desde/hasta (RFC 3339) y
+// valida que formen un rango. Un formato inválido o un rango invertido es
+// validación (400), no un error de servidor.
+func parsearPeriodo(r *http.Request) (desde, hasta time.Time, err error) {
+	desde, err = time.Parse(time.RFC3339, r.URL.Query().Get("desde"))
+	if err != nil {
+		return desde, hasta, platformerrors.NewValidacion("desde inválido (se espera RFC 3339)")
+	}
+	hasta, err = time.Parse(time.RFC3339, r.URL.Query().Get("hasta"))
+	if err != nil {
+		return desde, hasta, platformerrors.NewValidacion("hasta inválido (se espera RFC 3339)")
+	}
+	if hasta.Before(desde) {
+		return desde, hasta, platformerrors.NewValidacion("hasta no puede ser anterior a desde")
+	}
+	return desde, hasta, nil
+}
+
+// escribirJSON serializa v como JSON con el status dado.
+func escribirJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// escribirError traduce un error de la taxonomía de la plataforma a su status
+// HTTP (invariante I3: la misma categoría se traduce igual en HTTP y en proceso).
+func escribirError(w http.ResponseWriter, err error) {
+	cat := platformerrors.AsCategory(err)
+	escribirJSON(w, cat.HTTPStatus(), repclient.Error{
+		Codigo:  codigoDe(cat),
+		Mensaje: err.Error(),
+	})
+}
+
+// codigoDe mapea la categoría de la plataforma a un código de máquina estable en
+// snake_case (los consumidores ramifican sobre `codigo`, no sobre `mensaje`).
+func codigoDe(c platformerrors.Category) string {
+	switch c {
+	case platformerrors.CategoryNoAutorizado:
+		return "no_autorizado"
+	case platformerrors.CategoryNoEncontrado:
+		return "no_encontrado"
+	case platformerrors.CategoryValidacion:
+		return "validacion"
+	case platformerrors.CategoryConflicto:
+		return "conflicto"
+	case platformerrors.CategoryDegradado:
+		return "degradado"
+	case platformerrors.CategoryRateLimit:
+		return "rate_limit"
+	default:
+		return "roto"
+	}
 }
 
 // Workers devuelve los workers embebidos del módulo (ADR 29 §6), cada uno con el
@@ -153,12 +264,10 @@ func (m *Module) Consultas() ConsultasAPI {
 // 6): reporteViajes y reporteEstados. Tipada con los tipos generados del
 // paquete reportes de pf-pkg-contracts.
 //
-// IMPORTANTE: aunque las dos operaciones existen en el contrato (R2), sus
-// schemas de respuesta (ReporteViajes, ReporteEstados) NO incluyen la marca de
-// frescura (reportes.md (i)), que es obligatoria y el contrato todavía no
-// declara (R3). Por eso los métodos se exponen pero devuelven "no implementado"
-// hasta R3; el caso de uso interno ya se estructura para producir frescura en su
-// resultado, y la ruta no se monta (ver Routes).
+// Las dos respuestas incluyen la marca de frescura (reportes.md (i)):
+// proyeccion_al (hasta qué evento aplicó la proyección) y stale (si el retraso
+// excede el techo configurado). tracer.10 añadió esos campos al contrato, que
+// era la brecha R3 que antes bloqueaba estas lecturas.
 type ConsultasAPI interface {
 	ReporteViajes(ctx context.Context, params repclient.ReporteViajesParams) (*repclient.ReporteViajes, error)
 	ReporteEstados(ctx context.Context, params repclient.ReporteEstadosParams) (*repclient.ReporteEstados, error)
@@ -169,11 +278,67 @@ type consultas struct {
 }
 
 func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteViajesParams) (*repclient.ReporteViajes, error) {
-	// Bloqueado por R3: la marca de frescura no está en el schema de respuesta.
-	return nil, errNoImplementado("ReporteViajes")
+	tenant, err := tenantDe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filas, fr, err := c.m.lector.Viajes(ctx, tenant, params.Desde, params.Hasta)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repclient.FilaViaje, 0, len(filas))
+	for _, f := range filas {
+		fila := repclient.FilaViaje{Estado: f.Estado}
+		if err := fila.ViajeId.UnmarshalText([]byte(f.ViajeID)); err != nil {
+			return nil, platformerrors.NewRoto("reportes: viaje_id no es UUID en la proyección: %v", err)
+		}
+		if f.ClienteID != "" {
+			var cid repclient.Id
+			if err := cid.UnmarshalText([]byte(f.ClienteID)); err != nil {
+				return nil, platformerrors.NewRoto("reportes: cliente_id no es UUID en la proyección: %v", err)
+			}
+			fila.ClienteId = &cid
+		}
+		creado := f.CreadoEn
+		fila.CreadoEn = &creado
+		fila.CerradoEn = f.CerradoEn
+		out = append(out, fila)
+	}
+	rep := &repclient.ReporteViajes{Filas: out, Total: len(out)}
+	aplicarFrescura(&rep.ProyeccionAl, &rep.Stale, fr)
+	return rep, nil
 }
 
 func (c *consultas) ReporteEstados(ctx context.Context, params repclient.ReporteEstadosParams) (*repclient.ReporteEstados, error) {
-	// Bloqueado por R3: la marca de frescura no está en el schema de respuesta.
-	return nil, errNoImplementado("ReporteEstados")
+	tenant, err := tenantDe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conteos, fr, err := c.m.lector.Estados(ctx, tenant, params.Desde, params.Hasta)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repclient.ConteoEstado, 0, len(conteos))
+	for _, ce := range conteos {
+		out = append(out, repclient.ConteoEstado{
+			Estado:                 ce.Estado,
+			Conteo:                 ce.Conteo,
+			PermanenciaPromedioSeg: ce.PermanenciaPromSeg,
+		})
+	}
+	rep := &repclient.ReporteEstados{Conteos: out}
+	aplicarFrescura(&rep.ProyeccionAl, &rep.Stale, fr)
+	return rep, nil
+}
+
+// aplicarFrescura vuelca la frescura del caso de uso a los dos campos del
+// contrato. proyeccion_al queda nil (JSON null) si la proyección no aplicó
+// ningún evento del tenant; stale se envía siempre (false cuando no hay retraso).
+func aplicarFrescura(proyeccionAl **repclient.MarcaTiempo, stale **bool, fr proyecciones.Frescura) {
+	if !fr.AplicadoHasta.IsZero() {
+		al := fr.AplicadoHasta
+		*proyeccionAl = &al
+	}
+	s := fr.Stale
+	*stale = &s
 }
