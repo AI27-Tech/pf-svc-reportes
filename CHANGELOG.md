@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-10-28 — tracer.21: subir el pin de contrato
+
+**Resumen:** se sube el pin de `pf-pkg-contracts` de `v0.1.0-tracer.10` a `v0.1.0-tracer.21` (+11 olas). `reportes` solo usa los tipos de sus dos reportes de viaje (`reporteViajes`/`reporteEstados`), que no cambiaron en ese rango; el salto es aditivo. Solo `go.mod`/`go.sum`.
+
+**Para quién:** alineación de versión de contrato con el resto del backend. No habilita superficie nueva de reportes (sigue bloqueada por contrato/historias, R6/R8/R9/R12).
+
+**Cambios:**
+- `go.mod`/`go.sum`: `api-client-go` `v0.1.0-tracer.10` → `v0.1.0-tracer.21`.
+
+**Verificación:** `go build/vet ./...`, `go test ./...` (6 paquetes ok), `gofmt` limpio, `arch-test` (v0.1.1) PASS. Sin renombres de enum (§8), pese al salto de 11 olas.
+
 ## 2026:10:19 — fijar el pin de contrato al tag tracer.10 (E6-T2)
 
 **Resumen:** Se sube el pin de `pf-pkg-contracts` de la pseudo-versión al commit de `tracer.10` (PR #38, antes sin tag) al **tag publicado `v0.1.0-tracer.10`**. Cierra el `shortcut` que dejó el commit anterior: la regla git-workflow §7 exige que reportes no promueva a `-m` apuntando a un commit de rama `-d`, y el tag ya existe. `tracer.11` no toca `reportes`, por eso el pin se queda en `tracer.10`.
