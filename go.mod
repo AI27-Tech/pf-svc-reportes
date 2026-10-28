@@ -8,8 +8,12 @@ go 1.27
 // salientes: catalogos (lectura por lote y a una fecha) y la restringida a
 // identidad para revocación (DEC-051), ambas HTTP vía cliente generado, que no
 // implican requerir esos módulos.
+//
+// El pin de contracts es v0.1.0-tracer.10, la ola que añadió la marca de
+// frescura (proyeccion_al/stale) a reporteViajes/reporteEstados (R3, PR #38):
+// es la que desbloquea las lecturas de E6-T2. tracer.11 no toca reportes.
 require (
-	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.3
+	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.21
 	github.com/AI27-Tech/pf-pkg-platform-go v0.1.0
 	github.com/jackc/pgx/v5 v5.11.0
 )
@@ -21,6 +25,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

@@ -1,5 +1,49 @@
 # CHANGELOG
 
+## 2026-10-28 — tracer.21: subir el pin de contrato
+
+**Resumen:** se sube el pin de `pf-pkg-contracts` de `v0.1.0-tracer.10` a `v0.1.0-tracer.21` (+11 olas). `reportes` solo usa los tipos de sus dos reportes de viaje (`reporteViajes`/`reporteEstados`), que no cambiaron en ese rango; el salto es aditivo. Solo `go.mod`/`go.sum`.
+
+**Para quién:** alineación de versión de contrato con el resto del backend. No habilita superficie nueva de reportes (sigue bloqueada por contrato/historias, R6/R8/R9/R12).
+
+**Cambios:**
+- `go.mod`/`go.sum`: `api-client-go` `v0.1.0-tracer.10` → `v0.1.0-tracer.21`.
+
+**Verificación:** `go build/vet ./...`, `go test ./...` (6 paquetes ok), `gofmt` limpio, `arch-test` (v0.1.1) PASS. Sin renombres de enum (§8), pese al salto de 11 olas.
+
+## 2026:10:19 — fijar el pin de contrato al tag tracer.10 (E6-T2)
+
+**Resumen:** Se sube el pin de `pf-pkg-contracts` de la pseudo-versión al commit de `tracer.10` (PR #38, antes sin tag) al **tag publicado `v0.1.0-tracer.10`**. Cierra el `shortcut` que dejó el commit anterior: la regla git-workflow §7 exige que reportes no promueva a `-m` apuntando a un commit de rama `-d`, y el tag ya existe. `tracer.11` no toca `reportes`, por eso el pin se queda en `tracer.10`.
+
+**Cambios:**
+- `go.mod`: pin a `v0.1.0-tracer.10`; se retira el comentario de `shortcut`.
+- `go.sum`: `go mod tidy`.
+
+**Verificado:** `go build`/`vet` en verde; `gofmt` limpio; `arch-test OK`; suite completa (unit + integración con Postgres local) en verde.
+
+## 2026:10:17 00:40 — lecturas HTTP con marca de frescura (E6-T2)
+
+**Resumen:** Se montan las dos lecturas de reportes, `GET /api/v1/reportes/viajes` y `GET /api/v1/reportes/estados`, sobre las proyecciones ya pobladas (E6-T1). Cada respuesta declara su marca de frescura (`proyeccion_al` + `stale`), que era la brecha R3 que las bloqueaba. El contrato la añadió en tracer.10.
+
+**Contexto:** `reportes` es una proyección por eventos (ADR 18): puede ir atrasada, así que la respuesta debe declarar hasta qué momento aplicó eventos (`reportes.md` (i)). El techo de frescura que decide `stale` es configuración del servicio (`REPORTES_TECHO_FRESCURA`, default 60s en standalone), no del contrato.
+
+**Pin de contrato (shortcut):** `pf-pkg-contracts` queda pineado por **pseudo-versión** al commit de tracer.10 en `pf-contracts-d` (PR #38, aún sin tag). Subir a `v0.1.0-tracer.10` en cuanto el tag se publique, y ANTES de que reportes promueva a `-m` (git-workflow §7).
+
+**Cambios:**
+- `internal/proyecciones/proyecciones.go`: `Lector` con `Viajes` y `Estados` sobre el pool `svc_reportes`, filtrando por tenant antes de agregar (P9); `frescura()` deriva `proyeccion_al` de `MAX(hecho_viaje.aplicado_hasta)` y `stale` contra el techo configurable.
+- `reportes.go`: `Routes` monta las dos rutas delegando en `Consultas()` (I3); `ConsultasAPI` implementada (ya no devuelve "no implementado"); `tenantDe` saca el tenant del sujeto autenticado (DEC-495); helpers `escribirJSON`/`escribirError`/`codigoDe` portados del patrón de catalogos; `Deps.TechoFrescura` nuevo.
+- `cmd/api/main.go`: cablea `TechoFrescura` desde `REPORTES_TECHO_FRESCURA`.
+- `errores.go`: eliminado (su único símbolo `errNoImplementado` quedó sin uso).
+- Pruebas de integración del `Lector` contra Postgres real: lecturas, aislamiento de tenant, frescura no-stale, stale y tenant sin datos.
+
+**Verificado:** `go build`/`vet` en verde; `gofmt` limpio; `arch-test OK` (única arista saliente: identidad); la suite de integración (`TestLector` + el preexistente `TestProyeccion`) pasa contra Postgres 16 efímero.
+
+**Archivos modificados:**
+- `reportes.go`, `cmd/api/main.go`, `go.mod`, `go.sum`
+- `internal/proyecciones/proyecciones.go`, `internal/proyecciones/proyecciones_integration_test.go`, `internal/proyecciones/export_test.go`
+- `errores.go` (eliminado)
+- `CHANGELOG.md`
+
 ## 2026:10:14 (hora local) — alinear la promoción al estándar de los backends
 
 **Resumen:** reportes adopta el mismo par de workflows de promoción que ya usan los otros repos de backend (`pf-svc-catalogos`, `pf-svc-operacion`, `pf-svc-identidad`, `pf-svc-bff`, `pf-svc-core`, `pf-pkg-platform-go`): `promotion-pr-dq.yml` y `promotion-pr-qm.yml`, ambos con **merge manual**. Reemplaza la propuesta previa de auto-merge en `q→m` (PR #13, `automerge-promotion.yml`), que divergía del estándar: el último salto a producción se decide y se clickea a mano, como en el resto.
