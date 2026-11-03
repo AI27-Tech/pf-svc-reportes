@@ -44,16 +44,24 @@ import (
 	"github.com/AI27-Tech/pf-svc-reportes/internal/proyeccionpg"
 )
 
-// tenantDe extrae el tenant del sujeto autenticado (DEC-495: el cliente/tenant
-// se deriva del usuario, no se captura). Toda lectura filtra por este tenant
-// ANTES de agregar (P9). Sin claims en el contexto, la petición no está
-// autenticada: se rechaza, no se sirve un reporte sin acotar.
-func tenantDe(ctx context.Context) (string, error) {
+// tenantDe decide el filtro de tenant de la lectura (DEC-129). La audiencia
+// Interno no se acota por su tenant (el de AI27, mientras los hechos viven bajo
+// el del cliente, DEC-112): devuelve nil, que el lector lee como "todos los
+// clientes". Cualquier otra audiencia se acota a su tenant ANTES de agregar
+// (P9, DEC-129 #2). Sin claims, o sin tenant fuera de Interno, se rechaza: nunca
+// se sirve un reporte sin acotar a quien no es Interno.
+func tenantDe(ctx context.Context) (*string, error) {
 	claims := auth.ClaimsFromContext(ctx)
-	if claims == nil || claims.TenantID == "" {
-		return "", platformerrors.NewNoAutorizado("reportes: petición sin tenant autenticado")
+	if claims == nil {
+		return nil, platformerrors.NewNoAutorizado("reportes: petición sin autenticar")
 	}
-	return claims.TenantID, nil
+	if claims.Audiencia == auth.AudienciaInterno {
+		return nil, nil
+	}
+	if claims.TenantID == "" {
+		return nil, platformerrors.NewNoAutorizado("reportes: petición sin tenant autenticado")
+	}
+	return &claims.TenantID, nil
 }
 
 // Pools agrupa los pools por rol que el módulo necesita. reportes usa un solo

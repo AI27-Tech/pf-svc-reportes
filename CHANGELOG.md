@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 2026-11-03 13:30 — lecturas internas sin acotar por tenant (DEC-129)
+
+**Resumen:** `GET /api/v1/reportes/viajes` y `/estados` dejan de acotar por el tenant de quien pregunta cuando la audiencia es **Interno**: ven a todos los clientes. Antes un usuario interno real, que lleva el tenant de AI27, recibía un reporte vacío porque los hechos se guardan bajo el tenant del cliente (DEC-112). La audiencia Cliente (y cualquier audiencia que no sea Interno) sigue acotada a su tenant (DEC-129 #2, P9).
+
+**Para quién:** el dashboard interno (E6-T2, DEC-022 #9) y quien lo consuma por `bff`.
+
+**Cambios:**
+- `reportes.go`: `tenantDe` devuelve `*string`; `nil` para Interno (sin filtro), el tenant del token para el resto. Sin claims, o sin tenant fuera de Interno, sigue `no_autorizado`.
+- `internal/proyecciones/proyecciones.go`: `Viajes`, `Estados` y la frescura reciben `tenantID *string`; `nil` lee todos los tenants. La frescura (`proyeccion_al`/`stale`) usa el mismo filtro que las filas, así que para Interno es la global.
+- Pruebas: `reportes_test.go` (alcance por audiencia) y casos nuevos en `proyecciones_integration_test.go` (dos tenants: Interno ve los 4 viajes y `APROBADO: 2`, cliente B ve solo los suyos, frescura global `t2` sin `stale` donde la de A sola sí lo es).
+
+**Verificación:** `gofmt` limpio, `go build/vet ./...`, `go test ./...` con `REPORTES_TEST_DB` contra una base desechable de Postgres.app 18 (0 saltadas), `arch-test` (v0.1.1) OK.
+
 ## 2026-10-28 — tracer.21: subir el pin de contrato
 
 **Resumen:** se sube el pin de `pf-pkg-contracts` de `v0.1.0-tracer.10` a `v0.1.0-tracer.21` (+11 olas). `reportes` solo usa los tipos de sus dos reportes de viaje (`reporteViajes`/`reporteEstados`), que no cambiaron en ese rango; el salto es aditivo. Solo `go.mod`/`go.sum`.
