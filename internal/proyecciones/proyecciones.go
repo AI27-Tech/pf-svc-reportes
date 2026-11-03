@@ -6,8 +6,10 @@
 // vería igual que uno de un periodo tranquilo.
 //
 // Todo caso de uso filtra por tenant ANTES de agregar (P9): un conteo o promedio
-// sobre dos tenants filtra sin devolver una sola fila ajena. Ninguna consulta es
-// libre: el llamador envía parámetros a reportes definidos, nunca SQL.
+// sobre dos tenants filtra sin devolver una sola fila ajena. La única lectura sin
+// filtro de tenant es la de la audiencia Interno (tenant nil, DEC-129), que ve a
+// todos los clientes. Ninguna consulta es libre: el llamador envía parámetros a
+// reportes definidos, nunca SQL.
 package proyecciones
 
 import (
@@ -69,11 +71,12 @@ func NewLector(pool *pgxpool.Pool, techoFrescura time.Duration) *Lector {
 // Viajes lista los viajes creados en [desde, hasta] del tenant dado, con la
 // frescura de la proyección hecho_viaje. Filtra por tenant ANTES de agregar
 // (P9): el tenant es un parámetro del WHERE, nunca se agrega sobre filas ajenas.
-func (l *Lector) Viajes(ctx context.Context, tenantID string, desde, hasta time.Time) ([]FilaViaje, Frescura, error) {
+// tenantID nil lee todos los tenants: solo para la audiencia Interno (DEC-129).
+func (l *Lector) Viajes(ctx context.Context, tenantID *string, desde, hasta time.Time) ([]FilaViaje, Frescura, error) {
 	filas, err := l.pool.Query(ctx,
 		`SELECT viaje_id, cliente_id, estado_actual, creado_en, cerrado_en
 		   FROM reportes.hecho_viaje
-		  WHERE tenant_id = $1 AND creado_en >= $2 AND creado_en <= $3
+		  WHERE ($1::text IS NULL OR tenant_id = $1) AND creado_en >= $2 AND creado_en <= $3
 		  ORDER BY creado_en`,
 		tenantID, desde, hasta,
 	)
@@ -104,11 +107,12 @@ func (l *Lector) Viajes(ctx context.Context, tenantID string, desde, hasta time.
 // Estados devuelve la distribución por estado y la permanencia promedio de las
 // transiciones ocurridas en [desde, hasta] del tenant, con la frescura de la
 // proyección. El conteo es por estado destino de las transiciones del periodo.
-func (l *Lector) Estados(ctx context.Context, tenantID string, desde, hasta time.Time) ([]ConteoEstado, Frescura, error) {
+// tenantID nil agrega sobre todos los tenants, como en Viajes (DEC-129).
+func (l *Lector) Estados(ctx context.Context, tenantID *string, desde, hasta time.Time) ([]ConteoEstado, Frescura, error) {
 	filas, err := l.pool.Query(ctx,
 		`SELECT a_estado, COUNT(*)
 		   FROM reportes.hecho_transicion
-		  WHERE tenant_id = $1 AND ocurrido_en >= $2 AND ocurrido_en <= $3
+		  WHERE ($1::text IS NULL OR tenant_id = $1) AND ocurrido_en >= $2 AND ocurrido_en <= $3
 		  GROUP BY a_estado
 		  ORDER BY a_estado`,
 		tenantID, desde, hasta,
@@ -153,10 +157,13 @@ func (l *Lector) Estados(ctx context.Context, tenantID string, desde, hasta time
 // la frescura de hecho_transicion porque esa tabla no tiene columna de frescura
 // (su marca por fila es ocurrido_en, el instante de la transición, no "hasta
 // cuándo aplicó la proyección").
-func (l *Lector) frescura(ctx context.Context, tenantID string) (Frescura, error) {
+//
+// Usa el mismo filtro de tenant que la lectura que acompaña: con tenantID nil
+// (Interno, DEC-129) la frescura es la global, igual que las filas.
+func (l *Lector) frescura(ctx context.Context, tenantID *string) (Frescura, error) {
 	var aplicadoHasta *time.Time
 	err := l.pool.QueryRow(ctx,
-		`SELECT MAX(aplicado_hasta) FROM reportes.hecho_viaje WHERE tenant_id = $1`,
+		`SELECT MAX(aplicado_hasta) FROM reportes.hecho_viaje WHERE ($1::text IS NULL OR tenant_id = $1)`,
 		tenantID,
 	).Scan(&aplicadoHasta)
 	if err != nil {
