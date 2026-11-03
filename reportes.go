@@ -44,16 +44,19 @@ import (
 	"github.com/AI27-Tech/pf-svc-reportes/internal/proyeccionpg"
 )
 
-// tenantDe extrae el tenant del sujeto autenticado (DEC-495: el cliente/tenant
-// se deriva del usuario, no se captura). Toda lectura filtra por este tenant
-// ANTES de agregar (P9). Sin claims en el contexto, la petición no está
-// autenticada: se rechaza, no se sirve un reporte sin acotar.
-func tenantDe(ctx context.Context) (string, error) {
+// autorizarLectura deja leer reportes solo a la audiencia Interno: el cliente no
+// accede al dashboard interno (DEC-022 #9) y recibe 403, igual que cualquier
+// audiencia que no sea Interno. Sin claims es 401. Interno no se acota por su
+// tenant (DEC-129), así que quien pasa lee todos los clientes (tenant nil).
+func autorizarLectura(ctx context.Context) error {
 	claims := auth.ClaimsFromContext(ctx)
-	if claims == nil || claims.TenantID == "" {
-		return "", platformerrors.NewNoAutorizado("reportes: petición sin tenant autenticado")
+	if claims == nil {
+		return platformerrors.NewNoAutorizado("reportes: petición sin autenticar")
 	}
-	return claims.TenantID, nil
+	if claims.Audiencia != auth.AudienciaInterno {
+		return platformerrors.NewProhibido("reportes: solo la audiencia Interno lee reportes (DEC-022 #9)")
+	}
+	return nil
 }
 
 // Pools agrupa los pools por rol que el módulo necesita. reportes usa un solo
@@ -222,6 +225,8 @@ func codigoDe(c platformerrors.Category) string {
 	switch c {
 	case platformerrors.CategoryNoAutorizado:
 		return "no_autorizado"
+	case platformerrors.CategoryProhibido:
+		return "prohibido"
 	case platformerrors.CategoryNoEncontrado:
 		return "no_encontrado"
 	case platformerrors.CategoryValidacion:
@@ -278,11 +283,10 @@ type consultas struct {
 }
 
 func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteViajesParams) (*repclient.ReporteViajes, error) {
-	tenant, err := tenantDe(ctx)
-	if err != nil {
+	if err := autorizarLectura(ctx); err != nil {
 		return nil, err
 	}
-	filas, fr, err := c.m.lector.Viajes(ctx, tenant, params.Desde, params.Hasta)
+	filas, fr, err := c.m.lector.Viajes(ctx, nil, params.Desde, params.Hasta)
 	if err != nil {
 		return nil, err
 	}
@@ -310,11 +314,10 @@ func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteV
 }
 
 func (c *consultas) ReporteEstados(ctx context.Context, params repclient.ReporteEstadosParams) (*repclient.ReporteEstados, error) {
-	tenant, err := tenantDe(ctx)
-	if err != nil {
+	if err := autorizarLectura(ctx); err != nil {
 		return nil, err
 	}
-	conteos, fr, err := c.m.lector.Estados(ctx, tenant, params.Desde, params.Hasta)
+	conteos, fr, err := c.m.lector.Estados(ctx, nil, params.Desde, params.Hasta)
 	if err != nil {
 		return nil, err
 	}
