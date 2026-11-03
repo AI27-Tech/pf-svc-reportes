@@ -2,54 +2,81 @@ package reportes
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	repclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/reportes"
 	"github.com/AI27-Tech/pf-pkg-platform-go/auth"
 	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 )
 
-// TestTenantDe fija el alcance de lectura por audiencia (DEC-129): Interno lee
-// todos los clientes (nil) aunque traiga el tenant de AI27; Cliente, y cualquier
-// audiencia que no sea Interno, queda acotado a su tenant (DEC-129 #2, DEC-112).
-func TestTenantDe(t *testing.T) {
-	const (
-		tenantAI27    = "00000000-0000-0000-0000-0000000000a1"
-		tenantCliente = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	)
+const periodoQuery = "?desde=2026-10-01T00:00:00Z&hasta=2026-10-02T00:00:00Z"
+
+var (
+	claimsCliente = &auth.Claims{Audiencia: auth.AudienciaCliente, Rol: "cliente", TenantID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+	// Audiencia vacía o desconocida: no es Interno, así que tampoco lee.
+	claimsSinAudiencia = &auth.Claims{Rol: "cliente", TenantID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+)
+
+// TestReportesRechazaNoInterno fija que solo la audiencia Interno lee reportes
+// (DEC-022 #9): el cliente recibe 403 `prohibido` en las dos rutas y en la
+// fachada en proceso, y sin claims es 401. El rechazo ocurre antes de tocar la
+// base, por eso corre sin Postgres (el módulo no tiene pool).
+func TestReportesRechazaNoInterno(t *testing.T) {
+	m, err := New(Pools{}, Deps{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mux := http.NewServeMux()
+	m.Routes(mux)
+	q := m.Consultas()
+
 	casos := []struct {
 		nombre     string
 		claims     *auth.Claims
-		wantTenant string // "" = sin filtro (nil)
-		wantNoAut  bool
+		wantStatus int
+		wantCodigo string
+		wantCat    platformerrors.Category
 	}{
-		{"interno con tenant de AI27: sin filtro", &auth.Claims{Audiencia: auth.AudienciaInterno, Rol: "monitorista", TenantID: tenantAI27}, "", false},
-		{"interno sin tenant: sin filtro", &auth.Claims{Audiencia: auth.AudienciaInterno, Rol: "administrador"}, "", false},
-		{"cliente: acotado a su tenant", &auth.Claims{Audiencia: auth.AudienciaCliente, Rol: "cliente", TenantID: tenantCliente}, tenantCliente, false},
-		{"audiencia vacía: acotado a su tenant", &auth.Claims{TenantID: tenantCliente}, tenantCliente, false},
-		{"cliente sin tenant: no autorizado", &auth.Claims{Audiencia: auth.AudienciaCliente, Rol: "cliente"}, "", true},
-		{"sin claims: no autorizado", nil, "", true},
+		{"cliente: 403", claimsCliente, 403, "prohibido", platformerrors.CategoryProhibido},
+		{"audiencia vacía: 403", claimsSinAudiencia, 403, "prohibido", platformerrors.CategoryProhibido},
+		{"sin claims: 401", nil, 401, "no_autorizado", platformerrors.CategoryNoAutorizado},
 	}
 	for _, c := range casos {
-		t.Run(c.nombre, func(t *testing.T) {
-			ctx := context.Background()
-			if c.claims != nil {
-				ctx = auth.ContextWithClaims(ctx, c.claims)
-			}
-			got, err := tenantDe(ctx)
-			if c.wantNoAut {
-				if platformerrors.AsCategory(err) != platformerrors.CategoryNoAutorizado {
-					t.Fatalf("err = %v, se esperaba no autorizado", err)
+		ctx := context.Background()
+		if c.claims != nil {
+			ctx = auth.ContextWithClaims(ctx, c.claims)
+		}
+		for _, ruta := range []string{"/api/v1/reportes/viajes", "/api/v1/reportes/estados"} {
+			t.Run(c.nombre+" "+ruta, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, ruta+periodoQuery, nil).WithContext(ctx)
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, req)
+				if rec.Code != c.wantStatus {
+					t.Fatalf("status = %d, se esperaba %d", rec.Code, c.wantStatus)
 				}
-				return
+				var body repclient.Error
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("cuerpo no es Error: %v (%s)", err, rec.Body.String())
+				}
+				if body.Codigo != c.wantCodigo {
+					t.Fatalf("codigo = %q, se esperaba %q", body.Codigo, c.wantCodigo)
+				}
+			})
+		}
+		t.Run(c.nombre+" fachada", func(t *testing.T) {
+			desde := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+			hasta := desde.Add(24 * time.Hour)
+			rv, err := q.ReporteViajes(ctx, repclient.ReporteViajesParams{Desde: desde, Hasta: hasta})
+			if rv != nil || platformerrors.AsCategory(err) != c.wantCat {
+				t.Fatalf("ReporteViajes = (%v, %v), se esperaba (nil, %v)", rv, err, c.wantCat)
 			}
-			if err != nil {
-				t.Fatalf("err = %v", err)
-			}
-			switch {
-			case c.wantTenant == "" && got != nil:
-				t.Fatalf("tenant = %q, se esperaba nil (todos los clientes)", *got)
-			case c.wantTenant != "" && (got == nil || *got != c.wantTenant):
-				t.Fatalf("tenant = %v, se esperaba %q", got, c.wantTenant)
+			re, err := q.ReporteEstados(ctx, repclient.ReporteEstadosParams{Desde: desde, Hasta: hasta})
+			if re != nil || platformerrors.AsCategory(err) != c.wantCat {
+				t.Fatalf("ReporteEstados = (%v, %v), se esperaba (nil, %v)", re, err, c.wantCat)
 			}
 		})
 	}
