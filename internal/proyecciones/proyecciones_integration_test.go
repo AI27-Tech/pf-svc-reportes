@@ -133,7 +133,7 @@ func TestLector(t *testing.T) {
 		}
 	})
 
-	t.Run("cliente B ve solo sus dos viajes y su frescura", func(t *testing.T) {
+	t.Run("tenant B: solo sus dos viajes y su frescura", func(t *testing.T) {
 		lector := proyecciones.NewLector(pool, time.Hour)
 		desde, hasta := periodo()
 
