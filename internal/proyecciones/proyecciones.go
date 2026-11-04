@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/estados"
 	"github.com/AI27-Tech/pf-pkg-platform-go/pgxpool"
 )
 
@@ -68,17 +69,43 @@ func NewLector(pool *pgxpool.Pool, techoFrescura time.Duration) *Lector {
 	return &Lector{pool: pool, techoFrescura: techoFrescura, ahora: time.Now}
 }
 
-// Viajes lista los viajes creados en [desde, hasta] del tenant dado, con la
-// frescura de la proyección hecho_viaje. Filtra por tenant ANTES de agregar
-// (P9): el tenant es un parámetro del WHERE, nunca se agrega sobre filas ajenas.
-// tenantID nil lee todos los tenants: solo para la audiencia Interno (DEC-129).
-func (l *Lector) Viajes(ctx context.Context, tenantID *string, desde, hasta time.Time) ([]FilaViaje, Frescura, error) {
+// estadosEnCurso son los estados NO terminales de la máquina de estados del viaje
+// (ADR 19), derivados del paquete generado de contratos: ningún enum se copia a
+// mano (P14). Es lista positiva a propósito: un token desconocido o heredado no
+// cuenta como «en curso». Incluye PATRULLA_EN_CAMINO (V2, inalcanzable), que no
+// tiene filas.
+var estadosEnCurso = func() []string {
+	var out []string
+	for _, e := range estados.EstadosViaje {
+		if !e.EsTerminal() {
+			out = append(out, string(e))
+		}
+	}
+	return out
+}()
+
+// Viajes lista los viajes del alcance dado, con la frescura de la proyección
+// hecho_viaje. Filtra por tenant ANTES de agregar (P9): el tenant es un
+// parámetro del WHERE, nunca se agrega sobre filas ajenas. tenantID nil lee todos
+// los tenants: solo para la audiencia Interno (DEC-129).
+//
+// desde y hasta acotan por la fecha de creación; nil no acota por ese extremo.
+// soloEnCurso limita a los estados no terminales (E6-HU-025), sin importar cuándo
+// se crearon los viajes; combinado con un rango, se intersecan.
+func (l *Lector) Viajes(ctx context.Context, tenantID *string, desde, hasta *time.Time, soloEnCurso bool) ([]FilaViaje, Frescura, error) {
+	var estadosFiltro []string // nil = sin filtro de estado
+	if soloEnCurso {
+		estadosFiltro = estadosEnCurso
+	}
 	filas, err := l.pool.Query(ctx,
 		`SELECT viaje_id, cliente_id, estado_actual, creado_en, cerrado_en
 		   FROM reportes.hecho_viaje
-		  WHERE ($1::text IS NULL OR tenant_id = $1) AND creado_en >= $2 AND creado_en <= $3
+		  WHERE ($1::text IS NULL OR tenant_id = $1)
+		    AND ($2::timestamptz IS NULL OR creado_en >= $2)
+		    AND ($3::timestamptz IS NULL OR creado_en <= $3)
+		    AND ($4::text[] IS NULL OR estado_actual = ANY($4))
 		  ORDER BY creado_en`,
-		tenantID, desde, hasta,
+		tenantID, desde, hasta, estadosFiltro,
 	)
 	if err != nil {
 		return nil, Frescura{}, fmt.Errorf("proyecciones: consultar viajes: %w", err)
