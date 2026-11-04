@@ -14,7 +14,7 @@ go 1.27
 // es la que desbloquea las lecturas de E6-T2. tracer.11 no toca reportes.
 require (
 	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.36
-	github.com/AI27-Tech/pf-pkg-platform-go v0.1.8
+	github.com/AI27-Tech/pf-pkg-platform-go v0.1.9
 	github.com/jackc/pgx/v5 v5.11.0
 )
 
