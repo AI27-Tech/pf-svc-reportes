@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026-11-03 — filtro «viajes en curso» en `reporteViajes` (E8-T17, DT-10)
+
+**Resumen:** `GET /api/v1/reportes/viajes` y el método en proceso `ReporteViajes` aceptan el parámetro opcional `en_curso`. Con `en_curso=true` devuelven los viajes en estado **no terminal** sin importar cuándo se crearon; `desde` y `hasta` pasan a opcionales y, si se mandan, se intersecan con la fecha de creación. Sin `en_curso` el comportamiento es el de siempre: `desde` y `hasta` obligatorios. Antes, un viaje en curso creado fuera del periodo no podía aparecer en la vista, y «viajes en curso» es la primera vista que Producto quiere en el dashboard.
+
+**Para quién:** el `bff` y el panel interno (E8-T17). La audiencia Cliente sigue recibiendo 403. `reporteEstados` no cambia.
+
+**Estados «en curso»:** los no terminales de `contracts/estados/` (ADR 19), derivados de `EstadoViaje.EsTerminal()` del paquete generado; ningún enum se copia a mano. Es lista positiva: un token desconocido o heredado no cuenta como en curso. Los terminales son `CERRADO`, `CANCELADO`, `RECHAZADO_POR_AI27` y `RECHAZADO_POR_CLIENTE`.
+
+**Validación (400 `validacion`):** sin `en_curso` o con `en_curso=false`, faltar `desde` o `hasta`; un rango invertido (también con `en_curso`); fechas que no son RFC 3339; `en_curso` que no es booleano. La regla vive en `consultas.ReporteViajes`, no en el handler, para que la fachada en proceso de `core` la cumpla igual que HTTP. La autorización va primero: un Cliente recibe 403 aunque su petición sea inválida.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `pf-pkg-contracts` `tracer.21` → `tracer.36`. Sin renombres de enum (§8). El salto sí rompió una firma: en el cliente generado `ReporteViajesParams.Desde`/`.Hasta` pasan a `*MarcaTiempo` y se añade `EnCurso *bool`.
+- `reportes.go`: `parsearViajes` y `fechaOpcional` (el handler solo parsea) y la validación en `consultas.ReporteViajes`. `parsearPeriodo` queda para `reporteEstados`, que sigue exigiendo el rango.
+- `internal/proyecciones/proyecciones.go`: `Lector.Viajes` recibe `desde`, `hasta` como `*time.Time` y `soloEnCurso`; filtro `estado_actual = ANY(...)` solo cuando aplica.
+- Pruebas: `reportes_test.go` (los 400, sin Postgres), `reportes_integration_test.go` (con cuatro terminales y un viaje en tránsito creado un mes antes: `en_curso` sin rango, con rango, con solo `desde`, sin `en_curso`, `en_curso=false`, fachada, 400 sin parámetros y 403 al cliente) y `proyecciones_integration_test.go` (las seis llamadas a `Viajes` con la firma nueva). Comprobé que las pruebas detectan un filtro roto: al anular el filtro de estados fallan cuatro.
+
+**Atención:** `pf-svc-core` y el `bff` que llamen `ReporteViajes` con `Desde`/`Hasta` por valor dejan de compilar al subir el pin; deben pasar punteros.
+
+**Verificación:** `gofmt` limpio, `go build/vet ./...`, `go build ./cmd/api`, `go test ./...` con `REPORTES_TEST_DB` contra Postgres local y `arch-test` (v0.1.1) OK.
+
+**Archivos modificados:**
+- `go.mod`, `go.sum`, `reportes.go`
+- `internal/proyecciones/proyecciones.go`
+- `reportes_test.go`, `reportes_integration_test.go`, `internal/proyecciones/proyecciones_integration_test.go`
+- `CHANGELOG.md`
+
 ## 2026-11-03 15:40 — el cliente no lee reportes: 403 (DEC-022 #9)
 
 **Resumen:** `GET /api/v1/reportes/viajes` y `/estados`, y los métodos en proceso `ReporteViajes`/`ReporteEstados`, rechazan a la audiencia **Cliente** con **403** y código `prohibido`. Antes el cliente recibía un reporte acotado a su empresa; DEC-022 #9 dice que el cliente no accede al dashboard interno. La audiencia **Interno** no cambia: ve a todos los clientes (DEC-129). Sin claims sigue `401 no_autorizado`.
