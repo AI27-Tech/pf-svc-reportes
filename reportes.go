@@ -31,6 +31,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	repclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/reportes"
@@ -150,14 +151,16 @@ func New(p Pools, d Deps) (*Module, error) {
 func (m *Module) Routes(mux *http.ServeMux) {
 	q := m.Consultas()
 
-	// GET /api/v1/reportes/viajes?desde&hasta — reporte de viajes del periodo.
+	// GET /api/v1/reportes/viajes?desde&hasta&en_curso — reporte de viajes. Sin
+	// en_curso, desde y hasta son obligatorios; con en_curso=true son opcionales.
+	// Esa regla la valida la consulta, que también sirve a la fachada en proceso.
 	mux.HandleFunc("GET /api/v1/reportes/viajes", func(w http.ResponseWriter, r *http.Request) {
-		desde, hasta, err := parsearPeriodo(r)
+		params, err := parsearViajes(r)
 		if err != nil {
 			escribirError(w, err)
 			return
 		}
-		rep, err := q.ReporteViajes(r.Context(), repclient.ReporteViajesParams{Desde: desde, Hasta: hasta})
+		rep, err := q.ReporteViajes(r.Context(), params)
 		if err != nil {
 			escribirError(w, err)
 			return
@@ -182,6 +185,41 @@ func (m *Module) Routes(mux *http.ServeMux) {
 
 	// Las demás rutas (/cumplimiento, /flota, /exportaciones) no existen en el
 	// contrato (R4–R6): no se montan.
+}
+
+// parsearViajes lee desde, hasta (RFC 3339) y en_curso de reporteViajes. Los tres
+// son opcionales aquí: que falte el rango sin en_curso lo valida la consulta. Un
+// formato inválido es validación (400), no un error de servidor.
+func parsearViajes(r *http.Request) (repclient.ReporteViajesParams, error) {
+	var p repclient.ReporteViajesParams
+	q := r.URL.Query()
+	var err error
+	if p.Desde, err = fechaOpcional(q.Get("desde"), "desde"); err != nil {
+		return p, err
+	}
+	if p.Hasta, err = fechaOpcional(q.Get("hasta"), "hasta"); err != nil {
+		return p, err
+	}
+	if v := q.Get("en_curso"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return p, platformerrors.NewValidacion("en_curso inválido (se espera true o false)")
+		}
+		p.EnCurso = &b
+	}
+	return p, nil
+}
+
+// fechaOpcional parsea una fecha RFC 3339; un valor vacío es «no enviada» (nil).
+func fechaOpcional(v, nombre string) (*time.Time, error) {
+	if v == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return nil, platformerrors.NewValidacion("%s inválido (se espera RFC 3339)", nombre)
+	}
+	return &t, nil
 }
 
 // parsearPeriodo lee los query params obligatorios desde/hasta (RFC 3339) y
@@ -286,7 +324,17 @@ func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteV
 	if err := autorizarLectura(ctx); err != nil {
 		return nil, err
 	}
-	filas, fr, err := c.m.lector.Viajes(ctx, nil, params.Desde, params.Hasta)
+	// Sin en_curso el rango completo es obligatorio; con en_curso es opcional y,
+	// si viene, se interseca. La regla vive aquí y no en el handler para que la
+	// fachada en proceso (core) la cumpla igual que HTTP.
+	enCurso := params.EnCurso != nil && *params.EnCurso
+	if !enCurso && (params.Desde == nil || params.Hasta == nil) {
+		return nil, platformerrors.NewValidacion("reportes: sin en_curso, desde y hasta son obligatorios")
+	}
+	if params.Desde != nil && params.Hasta != nil && params.Hasta.Before(*params.Desde) {
+		return nil, platformerrors.NewValidacion("hasta no puede ser anterior a desde")
+	}
+	filas, fr, err := c.m.lector.Viajes(ctx, nil, params.Desde, params.Hasta, enCurso)
 	if err != nil {
 		return nil, err
 	}

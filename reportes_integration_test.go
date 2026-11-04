@@ -124,7 +124,7 @@ func TestReportesInternoVeTodos(t *testing.T) {
 		checkEstados(t, &rep)
 	})
 	t.Run("interno fachada: mismos resultados", func(t *testing.T) {
-		rv, err := m.Consultas().ReporteViajes(interno, repclient.ReporteViajesParams{Desde: desde, Hasta: hasta})
+		rv, err := m.Consultas().ReporteViajes(interno, repclient.ReporteViajesParams{Desde: &desde, Hasta: &hasta})
 		if err != nil {
 			t.Fatalf("ReporteViajes: %v", err)
 		}
@@ -141,6 +141,97 @@ func TestReportesInternoVeTodos(t *testing.T) {
 			if code := get(t, cliente, ruta, &body); code != 403 || body.Codigo != "prohibido" {
 				t.Fatalf("%s = (%d, %q), se esperaba (403, \"prohibido\")", ruta, code, body.Codigo)
 			}
+		}
+	})
+
+	// «Viajes en curso» (E6-HU-025, DT-10). Se siembran los cuatro estados
+	// terminales dentro del periodo y un viaje EN_TRANSITO creado un mes antes: el
+	// filtro debe excluir los terminales y no perder al viaje viejo en curso. Se
+	// siembra después de los subtests anteriores, que cuentan solo los tres de arriba.
+	const (
+		a1, a2, b1 = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"
+		cerrado    = "44444444-4444-4444-4444-444444444444"
+		viejo      = "55555555-5555-5555-5555-555555555555" // EN_TRANSITO, creado en septiembre
+		cancelado  = "66666666-6666-6666-6666-666666666666"
+		rechazoAI  = "77777777-7777-7777-7777-777777777777"
+		rechazoCli = "88888888-8888-8888-8888-888888888888"
+	)
+	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_viaje
+		(viaje_id, tenant_id, cliente_id, estado_actual, creado_en, aplicado_hasta) VALUES
+		('`+cerrado+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','CERRADO','2026-10-01T10:00:00Z','2026-10-01T10:00:00Z'),
+		('`+viejo+`','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','EN_TRANSITO','2026-09-01T08:00:00Z','2026-09-01T08:00:00Z'),
+		('`+cancelado+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','CANCELADO','2026-10-01T10:10:00Z','2026-10-01T10:10:00Z'),
+		('`+rechazoAI+`','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','RECHAZADO_POR_AI27','2026-10-01T10:20:00Z','2026-10-01T10:20:00Z'),
+		('`+rechazoCli+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','RECHAZADO_POR_CLIENTE','2026-10-01T10:30:00Z','2026-10-01T10:30:00Z')`)
+
+	consulta := func(ctx context.Context, query string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/reportes/viajes"+query, nil).WithContext(ctx))
+		return rec
+	}
+	idsDe := func(t *testing.T, rec *httptest.ResponseRecorder) []string {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, se esperaba 200; cuerpo: %s", rec.Code, rec.Body.String())
+		}
+		var rep repclient.ReporteViajes
+		if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
+			t.Fatalf("decodificar: %v (%s)", err, rec.Body.String())
+		}
+		var got []string
+		for _, f := range rep.Filas {
+			got = append(got, f.ViajeId.String())
+		}
+		sort.Strings(got)
+		if rep.Total != len(got) {
+			t.Fatalf("total = %d, filas = %d", rep.Total, len(got))
+		}
+		return got
+	}
+	// Con rango y sin en_curso entran todos los estados del periodo, terminales incluidos.
+	todosDeOctubre := []string{a1, a2, b1, cerrado, cancelado, rechazoAI, rechazoCli}
+
+	for _, c := range []struct {
+		nombre string
+		query  string
+		want   []string
+	}{
+		{"en_curso sin rango: no terminales de cualquier fecha", "?en_curso=true", []string{a1, a2, b1, viejo}},
+		{"en_curso con rango: se intersecan", periodoQuery + "&en_curso=true", []string{a1, a2, b1}},
+		{"en_curso con solo desde: el viejo queda fuera", "?desde=2026-10-01T00:00:00Z&en_curso=true", []string{a1, a2, b1}},
+		{"sin en_curso: el rango no filtra por estado", periodoQuery, todosDeOctubre},
+		{"en_curso=false con rango: igual que sin el parámetro", periodoQuery + "&en_curso=false", todosDeOctubre},
+	} {
+		t.Run(c.nombre, func(t *testing.T) {
+			got := idsDe(t, consulta(interno, c.query))
+			if !slices.Equal(got, c.want) {
+				t.Fatalf("viajes = %v, se esperaban %v", got, c.want)
+			}
+		})
+	}
+	t.Run("en_curso fachada sin rango", func(t *testing.T) {
+		enCurso := true
+		rv, err := m.Consultas().ReporteViajes(interno, repclient.ReporteViajesParams{EnCurso: &enCurso})
+		if err != nil {
+			t.Fatalf("ReporteViajes: %v", err)
+		}
+		var got []string
+		for _, f := range rv.Filas {
+			got = append(got, f.ViajeId.String())
+		}
+		sort.Strings(got)
+		if want := []string{a1, a2, b1, viejo}; !slices.Equal(got, want) {
+			t.Fatalf("viajes = %v, se esperaban %v", got, want)
+		}
+	})
+	t.Run("sin en_curso ni rango: 400", func(t *testing.T) {
+		if rec := consulta(interno, ""); rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, se esperaba 400", rec.Code)
+		}
+	})
+	t.Run("cliente con en_curso: 403", func(t *testing.T) {
+		if rec := consulta(cliente, "?en_curso=true"); rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, se esperaba 403", rec.Code)
 		}
 	})
 }
