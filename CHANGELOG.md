@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026-11-03 15:40 — el cliente no lee reportes: 403 (DEC-022 #9)
+
+**Resumen:** `GET /api/v1/reportes/viajes` y `/estados`, y los métodos en proceso `ReporteViajes`/`ReporteEstados`, rechazan a la audiencia **Cliente** con **403** y código `prohibido`. Antes el cliente recibía un reporte acotado a su empresa; DEC-022 #9 dice que el cliente no accede al dashboard interno. La audiencia **Interno** no cambia: ve a todos los clientes (DEC-129). Sin claims sigue `401 no_autorizado`.
+
+**Para quién:** `bff` y el panel interno no cambian. Un portal de cliente que llamara estas rutas ahora recibe 403 (hoy ninguno las consume).
+
+**Cambios:**
+- `reportes.go`: `tenantDe` se sustituye por `autorizarLectura`: solo pasa la audiencia Interno; cualquier otra recibe `platformerrors.NewProhibido`. Se retira la rama que acotaba al tenant del cliente, ya inalcanzable; el lector recibe siempre tenant `nil`. `codigoDe` traduce `CategoryProhibido` a `"prohibido"` (el contrato ya declara 403 `Prohibido` en las dos operaciones).
+- `go.mod`/`go.sum`: `pf-pkg-platform-go` `v0.1.0` → `v0.1.8`, la primera con `NewProhibido`. Sin roturas de build.
+- Pruebas: `reportes_test.go` (cliente y audiencia vacía → 403 `prohibido`, sin claims → 401, en las dos rutas y la fachada, sin Postgres) y `reportes_integration_test.go` (Interno por HTTP y fachada: 3 viajes de dos clientes, `APROBADO: 2`, `proyeccion_al` global; cliente con datos propios → 403). Se retira la prueba que afirmaba que el cliente veía su tenant.
+
+**Verificación:** `gofmt` limpio, `go build/vet ./...`, `go build ./cmd/api`, `go test ./...` con `REPORTES_TEST_DB` contra una base desechable de Postgres.app 18 (0 saltadas), `arch-test` (v0.1.1) OK.
+
+## 2026-11-03 13:30 — lecturas internas sin acotar por tenant (DEC-129)
+
+**Resumen:** `GET /api/v1/reportes/viajes` y `/estados` dejan de acotar por el tenant de quien pregunta cuando la audiencia es **Interno**: ven a todos los clientes. Antes un usuario interno real, que lleva el tenant de AI27, recibía un reporte vacío porque los hechos se guardan bajo el tenant del cliente (DEC-112). La audiencia Cliente (y cualquier audiencia que no sea Interno) sigue acotada a su tenant (DEC-129 #2, P9).
+
+**Para quién:** el dashboard interno (E6-T2, DEC-022 #9) y quien lo consuma por `bff`.
+
+**Cambios:**
+- `reportes.go`: `tenantDe` devuelve `*string`; `nil` para Interno (sin filtro), el tenant del token para el resto. Sin claims, o sin tenant fuera de Interno, sigue `no_autorizado`.
+- `internal/proyecciones/proyecciones.go`: `Viajes`, `Estados` y la frescura reciben `tenantID *string`; `nil` lee todos los tenants. La frescura (`proyeccion_al`/`stale`) usa el mismo filtro que las filas, así que para Interno es la global.
+- Pruebas: `reportes_test.go` (alcance por audiencia) y casos nuevos en `proyecciones_integration_test.go` (dos tenants: Interno ve los 4 viajes y `APROBADO: 2`, cliente B ve solo los suyos, frescura global `t2` sin `stale` donde la de A sola sí lo es).
+
+**Verificación:** `gofmt` limpio, `go build/vet ./...`, `go test ./...` con `REPORTES_TEST_DB` contra una base desechable de Postgres.app 18 (0 saltadas), `arch-test` (v0.1.1) OK.
+
 ## 2026-10-28 — tracer.21: subir el pin de contrato
 
 **Resumen:** se sube el pin de `pf-pkg-contracts` de `v0.1.0-tracer.10` a `v0.1.0-tracer.21` (+11 olas). `reportes` solo usa los tipos de sus dos reportes de viaje (`reporteViajes`/`reporteEstados`), que no cambiaron en ese rango; el salto es aditivo. Solo `go.mod`/`go.sum`.
