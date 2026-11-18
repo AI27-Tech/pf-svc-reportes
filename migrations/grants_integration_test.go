@@ -104,6 +104,15 @@ func TestGrants(t *testing.T) {
 		`UPDATE reportes.hecho_condicion SET cerrada_en = now() WHERE viaje_id = '`+viajeID+`'`,
 		"svc_reportes debe poder cerrar un episodio de condición (UPDATE)")
 
+	// Proyección de alcance.cambiado (0004, DEC-149 #20): se inserta y se
+	// reemplaza el conjunto (UPDATE), incluido vaciarlo para quitar al sujeto.
+	mustExec(t, ctx, pool,
+		`INSERT INTO reportes.alcance_sujeto (idp_subject, clientes_ids, cambiado_en) VALUES ('sub-1', '{}', now())`,
+		"svc_reportes debe poder proyectar el alcance de un sujeto")
+	mustExec(t, ctx, pool,
+		`UPDATE reportes.alcance_sujeto SET clientes_ids = '{}', cambiado_en = now() WHERE idp_subject = 'sub-1'`,
+		"svc_reportes debe poder reemplazar el alcance de un sujeto (UPDATE)")
+
 	// --- SIN DELETE en ninguna tabla (decisión del Lead E0-T5). ---
 	denied := []struct{ sql, wantErr, msg string }{
 		{`DELETE FROM reportes.inbox_evento`, "permission denied for table inbox_evento",
@@ -118,6 +127,8 @@ func TestGrants(t *testing.T) {
 			"el grano de transición no se reescribe (append-only)"},
 		{`DELETE FROM reportes.hecho_condicion`, "permission denied for table hecho_condicion",
 			"el episodio de condición no se borra"},
+		{`DELETE FROM reportes.alcance_sujeto`, "permission denied for table alcance_sujeto",
+			"el alcance no se borra: quitar a un sujeto es vaciar su conjunto"},
 		{`SELECT 1 FROM reportes.tabla_futura`, "permission denied for table tabla_futura",
 			"una tabla futura no hereda privilegios por defecto"},
 		{fmt.Sprintf(`SELECT 1 FROM %s.dato`, foreignSchema), "permission denied for schema " + foreignSchema,

@@ -22,9 +22,11 @@ publica eventos, no tiene `outbox` ni relay. Arista entrante: solo desde `bff`.
   `adapters/http/catalogos/`; el **en proceso** vive en `pf-svc-core`. El
   presupuesto de tiempo se exporta en `PresupuestoCatalogos` para que ambos
   adaptadores usen el mismo valor (I3).
-- **`reportes → identidad`** (`RevocacionPort`): **restringida** a revocación
-  (`listarRevocadas` + `obtenerSesion`, DEC-051). No es dependencia de dominio
-  sino de infraestructura de autorización.
+- **`reportes → identidad`** (`RevocacionPort`, `AlcancesPort`): **restringida**
+  a revocación (`listarRevocadas` + `obtenerSesion`, DEC-051) y al snapshot de
+  alcances (`listarAlcances`, DEC-149 #20). No es dependencia de dominio sino de
+  infraestructura de autorización. El adaptador HTTP de `AlcancesPort` vive en
+  `adapters/http/identidad/`; el en proceso, en `pf-svc-core`.
 - **No llama a `operacion` ni a `procesamiento`:** esos hechos llegan por evento.
   `arch-test` verifica estas aristas contra `reglas.yaml`.
 
@@ -38,6 +40,28 @@ Materializadas en este scaffold (migración `0001_init.sql`):
 | `hecho_transicion` | `viaje.estado_cambiado` | tabla creada |
 | `hecho_condicion` | `viaje.condicion_abierta/.condicion_cerrada` (**solo `INCIDENCIA`**) | tabla creada |
 | `inbox_evento` | — | tabla creada (dedup por `evento_id`) |
+| `alcance_sujeto` (0004) | `alcance.cambiado` de `identidad` + snapshot `listarAlcances` | proyectada; llave `idp_subject` (DEC-149 #20, #22) |
+
+## Alcance del dashboard (DEC-149)
+
+`reporteViajes` y `reporteEstados` aplican el alcance por cliente de
+`reportes.yaml` (`tracer.42`):
+
+| Rol | Ve |
+|---|---|
+| `administrador` | todos los viajes |
+| `monitorista`, `supervisor`, `coordinador` | los viajes de sus clientes efectivos que pasaron por `APROBADO` |
+| cualquier otro (`jefe_operativo`, `ejecutivo`, `reaccion`, …) y la audiencia Cliente | `403` |
+
+- Los clientes efectivos salen de `reportes.alcance_sujeto`, buscados por el
+  `sub` del token. Un sujeto sin fila no ve nada (falla cerrado).
+- El filtro va en la consulta: filas, total, conteos por estado y frescura
+  salen acotados.
+- "Pasó por `APROBADO`" pide evidencia en la proyección: estado actual
+  `APROBADO` o una transición que entra o sale de `APROBADO`.
+- La proyección se mantiene con un consumidor durable propio
+  (`reportes-alcance`). Con `Deps.Alcances`, la reconstrucción al arrancar
+  (snapshot + cursor) lo envuelve y deja el worker not-ready hasta converger.
 
 Toda consulta pasa por la **puerta única de presupuesto** (`internal/presupuesto`:
 tiempo y memoria por consulta, cancelación, atribución de costo). Todo reporte
@@ -84,8 +108,9 @@ Discrepancias reportadas, no resueltas:
 
 - **E6-T2 menciona "estadías"** en `hecho_condicion`: no son un valor de
   `condicion_viaje` en el contrato. Solo se materializa `INCIDENCIA`.
-- **Parámetro "alcance"** en `/reportes/viajes` (reportes.md (f)): el contrato
-  solo tiene `desde`/`hasta`. No se agregan parámetros; el contrato debe aclararlo.
+- **Parámetro "alcance"** en `/reportes/viajes` (reportes.md (f)): resuelto en
+  `tracer.41`/`tracer.42`. El alcance no es parámetro: sale del token y de la
+  proyección de `alcance.cambiado` (DEC-149).
 
 ## En espera de ADR 32
 
