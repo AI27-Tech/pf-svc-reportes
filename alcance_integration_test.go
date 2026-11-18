@@ -2,13 +2,19 @@ package reportes
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
+	"maps"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sort"
 	"testing"
 	"time"
 
 	idclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/identidad"
+	repclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/reportes"
+	"github.com/AI27-Tech/pf-pkg-platform-go/auth"
 	"github.com/AI27-Tech/pf-pkg-platform-go/bus"
 	"github.com/AI27-Tech/pf-pkg-platform-go/pgxpool"
 	"github.com/AI27-Tech/pf-pkg-platform-go/worker"
@@ -222,5 +228,195 @@ func TestAlcanceReconstruccionSnapshotYCursor(t *testing.T) {
 		if got := clientesDe(t, ctx, m, sub); !slices.Equal(got, quiere) {
 			t.Errorf("%s: %v; se esperaba %v", sub, got, quiere)
 		}
+	}
+}
+
+// TestAlcanceFiltraDashboard: el dashboard acota en la consulta (DEC-149,
+// reportes.yaml de tracer.42). monitorista y supervisor ven solo los viajes de
+// sus clientes efectivos que pasaron por APROBADO; filas, total, conteos por
+// estado y frescura salen acotados. Sin alcance proyectado no ven nada. El
+// administrador ve todo; jefe_operativo, ejecutivo, reaccion y el cliente
+// reciben 403. Mismo resultado por HTTP y por la fachada en proceso.
+func TestAlcanceFiltraDashboard(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	admin, pool := prepararBD(t, ctx)
+	const (
+		A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		// Viajes de A.
+		a1 = "a1a1a1a1-0000-0000-0000-000000000001" // nace APROBADO (Operación), sin transiciones
+		a2 = "a2a2a2a2-0000-0000-0000-000000000002" // SOLICITADO
+		a3 = "a3a3a3a3-0000-0000-0000-000000000003" // SOLICITADO → APROBADO → ASIGNADO → EN_TRANSITO
+		a4 = "a4a4a4a4-0000-0000-0000-000000000004" // SOLICITADO → CANCELADO
+		a5 = "a5a5a5a5-0000-0000-0000-000000000005" // SOLICITADO → RECHAZADO_POR_AI27
+		a6 = "a6a6a6a6-0000-0000-0000-000000000006" // nace APROBADO → CANCELADO
+		// Viaje de B, el más reciente (su aplicado_hasta no debe filtrarse a mon-a).
+		b1 = "b1b1b1b1-0000-0000-0000-000000000001" // nace APROBADO → ASIGNADO → EN_TRANSITO
+	)
+	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_viaje
+		(viaje_id, tenant_id, cliente_id, estado_actual, creado_en, aplicado_hasta) VALUES
+		('`+a1+`','`+A+`','`+A+`','APROBADO','2026-10-01T08:00:00Z','2026-10-01T08:00:00Z'),
+		('`+a2+`','`+A+`','`+A+`','SOLICITADO','2026-10-01T08:10:00Z','2026-10-01T08:10:00Z'),
+		('`+a3+`','`+A+`','`+A+`','EN_TRANSITO','2026-10-01T08:20:00Z','2026-10-01T09:20:00Z'),
+		('`+a4+`','`+A+`','`+A+`','CANCELADO','2026-10-01T08:30:00Z','2026-10-01T09:30:00Z'),
+		('`+a5+`','`+A+`','`+A+`','RECHAZADO_POR_AI27','2026-10-01T08:40:00Z','2026-10-01T09:40:00Z'),
+		('`+a6+`','`+A+`','`+A+`','CANCELADO','2026-10-01T08:50:00Z','2026-10-01T09:10:00Z'),
+		('`+b1+`','`+B+`','`+B+`','EN_TRANSITO','2026-10-01T09:00:00Z','2026-10-01T11:00:00Z')`)
+	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_transicion
+		(viaje_id, tenant_id, de_estado, a_estado, ocurrido_en, evento_id) VALUES
+		('`+a3+`','`+A+`','SOLICITADO','APROBADO','2026-10-01T09:00:00Z',gen_random_uuid()),
+		('`+a3+`','`+A+`','APROBADO','ASIGNADO','2026-10-01T09:10:00Z',gen_random_uuid()),
+		('`+a3+`','`+A+`','ASIGNADO','EN_TRANSITO','2026-10-01T09:20:00Z',gen_random_uuid()),
+		('`+a4+`','`+A+`','SOLICITADO','CANCELADO','2026-10-01T09:30:00Z',gen_random_uuid()),
+		('`+a5+`','`+A+`','SOLICITADO','RECHAZADO_POR_AI27','2026-10-01T09:40:00Z',gen_random_uuid()),
+		('`+a6+`','`+A+`','APROBADO','CANCELADO','2026-10-01T09:10:00Z',gen_random_uuid()),
+		('`+b1+`','`+B+`','APROBADO','ASIGNADO','2026-10-01T10:00:00Z',gen_random_uuid()),
+		('`+b1+`','`+B+`','ASIGNADO','EN_TRANSITO','2026-10-01T11:00:00Z',gen_random_uuid())`)
+	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.alcance_sujeto (idp_subject, clientes_ids, cambiado_en) VALUES
+		('mon-a', '{`+A+`}', now()), ('sup-ab', '{`+A+`,`+B+`}', now()), ('mon-vacio', '{}', now())`)
+
+	m, err := New(Pools{Reportes: pool}, Deps{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mux := http.NewServeMux()
+	m.Routes(mux)
+	como := func(sub, rol string) context.Context {
+		return auth.ContextWithClaims(ctx, &auth.Claims{Subject: sub, Rol: rol, Audiencia: auth.AudienciaInterno})
+	}
+	hora := func(h, min int) *time.Time { v := time.Date(2026, 10, 1, h, min, 0, 0, time.UTC); return &v }
+	desde := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	hasta := desde.Add(24 * time.Hour)
+
+	type esperado struct {
+		viajes, enCurso []string
+		estados         map[string]int
+		al              *time.Time // proyeccion_al; nil = null
+	}
+	todos := esperado{
+		viajes:  []string{a1, a2, a3, a4, a5, a6, b1},
+		enCurso: []string{a1, a2, a3, b1},
+		estados: map[string]int{"APROBADO": 1, "ASIGNADO": 2, "EN_TRANSITO": 2, "CANCELADO": 2, "RECHAZADO_POR_AI27": 1},
+		al:      hora(11, 0),
+	}
+	soloA := esperado{
+		viajes:  []string{a1, a3, a6},
+		enCurso: []string{a1, a3},
+		estados: map[string]int{"APROBADO": 1, "ASIGNADO": 1, "EN_TRANSITO": 1, "CANCELADO": 1},
+		al:      hora(9, 20), // MAX de a1, a3, a6; no el de b1 ni el de a5
+	}
+	nada := esperado{estados: map[string]int{}}
+	casos := []struct {
+		nombre string
+		ctx    context.Context
+		quiere esperado
+	}{
+		{"administrador: todo", como("adm-1", "administrador"), todos},
+		{"monitorista de A: su cliente desde APROBADO", como("mon-a", "monitorista"), soloA},
+		{"supervisor de A y B: la unión", como("sup-ab", "supervisor"), esperado{
+			viajes:  []string{a1, a3, a6, b1},
+			enCurso: []string{a1, a3, b1},
+			estados: map[string]int{"APROBADO": 1, "ASIGNADO": 2, "EN_TRANSITO": 2, "CANCELADO": 1},
+			al:      hora(11, 0),
+		}},
+		{"coordinador con el alcance de A", como("mon-a", "coordinador"), soloA},
+		{"monitorista con alcance vacío: nada", como("mon-vacio", "monitorista"), nada},
+		{"monitorista sin alcance proyectado: nada (falla cerrado)", como("mon-sin", "monitorista"), nada},
+	}
+
+	getJSON := func(t *testing.T, c context.Context, ruta string, v any) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ruta, nil).WithContext(c))
+		if err := json.Unmarshal(rec.Body.Bytes(), v); err != nil {
+			t.Fatalf("decodificar %s: %v (%s)", ruta, err, rec.Body.String())
+		}
+		return rec.Code
+	}
+	idsViajes := func(t *testing.T, rep *repclient.ReporteViajes) []string {
+		t.Helper()
+		got := []string{}
+		for _, f := range rep.Filas {
+			got = append(got, f.ViajeId.String())
+		}
+		sort.Strings(got)
+		if rep.Total != len(got) {
+			t.Fatalf("total = %d, filas = %d", rep.Total, len(got))
+		}
+		return got
+	}
+	mapaEstados := func(rep *repclient.ReporteEstados) map[string]int {
+		got := map[string]int{}
+		for _, c := range rep.Conteos {
+			got[c.Estado] = c.Conteo
+		}
+		return got
+	}
+	mismaAl := func(got *time.Time, quiere *time.Time) bool {
+		return (got == nil && quiere == nil) || (got != nil && quiere != nil && got.Equal(*quiere))
+	}
+	ordenar := func(s []string) []string { s = slices.Clone(s); sort.Strings(s); return s }
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			quiereViajes, quiereEnCurso := ordenar(c.quiere.viajes), ordenar(c.quiere.enCurso)
+			if quiereViajes == nil {
+				quiereViajes, quiereEnCurso = []string{}, []string{}
+			}
+			var rv repclient.ReporteViajes
+			if code := getJSON(t, c.ctx, "/api/v1/reportes/viajes"+periodoQuery, &rv); code != 200 {
+				t.Fatalf("viajes: status %d", code)
+			}
+			if got := idsViajes(t, &rv); !slices.Equal(got, quiereViajes) {
+				t.Errorf("viajes = %v; se esperaba %v", got, quiereViajes)
+			}
+			if !mismaAl(rv.ProyeccionAl, c.quiere.al) {
+				t.Errorf("proyeccion_al = %v; se esperaba %v", rv.ProyeccionAl, c.quiere.al)
+			}
+			var rc repclient.ReporteViajes
+			if code := getJSON(t, c.ctx, "/api/v1/reportes/viajes?en_curso=true", &rc); code != 200 {
+				t.Fatalf("en_curso: status %d", code)
+			}
+			if got := idsViajes(t, &rc); !slices.Equal(got, quiereEnCurso) {
+				t.Errorf("en_curso = %v; se esperaba %v", got, quiereEnCurso)
+			}
+			var re repclient.ReporteEstados
+			if code := getJSON(t, c.ctx, "/api/v1/reportes/estados"+periodoQuery, &re); code != 200 {
+				t.Fatalf("estados: status %d", code)
+			}
+			if got := mapaEstados(&re); !maps.Equal(got, c.quiere.estados) {
+				t.Errorf("estados = %v; se esperaba %v", got, c.quiere.estados)
+			}
+
+			// La fachada en proceso (core) da lo mismo (I3).
+			fv, err := m.Consultas().ReporteViajes(c.ctx, repclient.ReporteViajesParams{Desde: &desde, Hasta: &hasta})
+			if err != nil {
+				t.Fatalf("fachada ReporteViajes: %v", err)
+			}
+			if got := idsViajes(t, fv); !slices.Equal(got, quiereViajes) {
+				t.Errorf("fachada viajes = %v; se esperaba %v", got, quiereViajes)
+			}
+			fe, err := m.Consultas().ReporteEstados(c.ctx, repclient.ReporteEstadosParams{Desde: desde, Hasta: hasta})
+			if err != nil {
+				t.Fatalf("fachada ReporteEstados: %v", err)
+			}
+			if got := mapaEstados(fe); !maps.Equal(got, c.quiere.estados) {
+				t.Errorf("fachada estados = %v; se esperaba %v", got, c.quiere.estados)
+			}
+		})
+	}
+
+	// Los roles sin el dashboard reciben 403 aunque tengan alcance proyectado.
+	for _, rol := range []string{"jefe_operativo", "ejecutivo", "reaccion"} {
+		t.Run(rol+": 403", func(t *testing.T) {
+			c := como("mon-a", rol)
+			for _, ruta := range []string{"/api/v1/reportes/viajes" + periodoQuery, "/api/v1/reportes/estados" + periodoQuery} {
+				var body repclient.Error
+				if code := getJSON(t, c, ruta, &body); code != 403 || body.Codigo != "prohibido" {
+					t.Errorf("%s = (%d, %q); se esperaba (403, prohibido)", ruta, code, body.Codigo)
+				}
+			}
+		})
 	}
 }

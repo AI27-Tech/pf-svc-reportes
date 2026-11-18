@@ -68,7 +68,7 @@ func TestReportesInternoVeTodos(t *testing.T) {
 	mux := http.NewServeMux()
 	m.Routes(mux)
 
-	interno := auth.ContextWithClaims(ctx, &auth.Claims{Audiencia: auth.AudienciaInterno, Rol: "monitorista", TenantID: "00000000-0000-0000-0000-0000000000a1"})
+	interno := auth.ContextWithClaims(ctx, &auth.Claims{Audiencia: auth.AudienciaInterno, Rol: "administrador", TenantID: "00000000-0000-0000-0000-0000000000a1"})
 	cliente := auth.ContextWithClaims(ctx, claimsCliente) // tenant A, que sí tiene viajes
 	wantViajes := []string{
 		"11111111-1111-1111-1111-111111111111",

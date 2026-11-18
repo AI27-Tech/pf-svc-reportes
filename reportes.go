@@ -46,19 +46,46 @@ import (
 	"github.com/AI27-Tech/pf-svc-reportes/internal/proyeccionpg"
 )
 
-// autorizarLectura deja leer reportes solo a la audiencia Interno: el cliente no
-// accede al dashboard interno (DEC-022 #9) y recibe 403, igual que cualquier
-// audiencia que no sea Interno. Sin claims es 401. Interno no se acota por su
-// tenant (DEC-129), así que quien pasa lee todos los clientes (tenant nil).
-func autorizarLectura(ctx context.Context) error {
+// autorizarLectura decide quién lee el dashboard y con qué ámbito (DEC-149,
+// reportes.yaml de tracer.42). Sin claims es 401. El cliente no accede al
+// dashboard interno (DEC-022 #9) y recibe 403, igual que cualquier audiencia que
+// no sea Interno. Dentro de Interno, el rol sin el dashboard (todo lo que no es
+// administrador ni monitoreo) recibe 403. Interno no se acota por su tenant
+// (DEC-129): el administrador lee todos los clientes y el monitoreo, sus
+// clientes efectivos (ver acotar).
+//
+// Es pura (no toca la base): devuelve el ámbito y el subject del token, con el
+// que acotar busca el alcance. Así la validación de parámetros puede ir entre
+// las dos sin consultar nada.
+func autorizarLectura(ctx context.Context) (alcance.Ambito, string, error) {
 	claims := auth.ClaimsFromContext(ctx)
 	if claims == nil {
-		return platformerrors.NewNoAutorizado("reportes: petición sin autenticar")
+		return alcance.Prohibido, "", platformerrors.NewNoAutorizado("reportes: petición sin autenticar")
 	}
 	if claims.Audiencia != auth.AudienciaInterno {
-		return platformerrors.NewProhibido("reportes: solo la audiencia Interno lee reportes (DEC-022 #9)")
+		return alcance.Prohibido, "", platformerrors.NewProhibido("reportes: solo la audiencia Interno lee reportes (DEC-022 #9)")
 	}
-	return nil
+	amb := alcance.Para(claims.Rol)
+	if amb == alcance.Prohibido {
+		return amb, "", platformerrors.NewProhibido("reportes: el rol %q no lee el dashboard de monitoreo (DEC-149 #8)", claims.Rol)
+	}
+	return amb, claims.Subject, nil
+}
+
+// acotar resuelve el alcance de una lectura autorizada. Todos no acota (nil).
+// PorClientes son los clientes efectivos del subject en la proyección de
+// alcance.cambiado, que se indexa por el `sub` del token (DEC-149 #22); un
+// sujeto sin fila no ve nada y un error de base se propaga: nunca se lee como
+// "todos" (falla cerrado).
+func (m *Module) acotar(ctx context.Context, amb alcance.Ambito, subject string) (*proyecciones.Alcance, error) {
+	if amb == alcance.Todos {
+		return nil, nil
+	}
+	clientes, err := m.alcance.Clientes(ctx, subject)
+	if err != nil {
+		return nil, err
+	}
+	return &proyecciones.Alcance{Clientes: clientes}, nil
 }
 
 // Pools agrupa los pools por rol que el módulo necesita. reportes usa un solo
@@ -346,6 +373,12 @@ func (m *Module) Consultas() ConsultasAPI {
 // proyeccion_al (hasta qué evento aplicó la proyección) y stale (si el retraso
 // excede el techo configurado). tracer.10 añadió esos campos al contrato, que
 // era la brecha R3 que antes bloqueaba estas lecturas.
+//
+// Las dos aplican el alcance por cliente (DEC-149, tracer.42): administrador
+// todo; monitorista, supervisor y coordinador los viajes de sus clientes
+// efectivos que pasaron por APROBADO; otro rol 403. No hay recurso por viaje en
+// reportes, así que el "404 fuera de alcance" no aplica: un viaje ajeno
+// simplemente no aparece en las filas, el total, los conteos ni la frescura.
 type ConsultasAPI interface {
 	ReporteViajes(ctx context.Context, params repclient.ReporteViajesParams) (*repclient.ReporteViajes, error)
 	ReporteEstados(ctx context.Context, params repclient.ReporteEstadosParams) (*repclient.ReporteEstados, error)
@@ -356,7 +389,8 @@ type consultas struct {
 }
 
 func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteViajesParams) (*repclient.ReporteViajes, error) {
-	if err := autorizarLectura(ctx); err != nil {
+	amb, subject, err := autorizarLectura(ctx)
+	if err != nil {
 		return nil, err
 	}
 	// Sin en_curso el rango completo es obligatorio; con en_curso es opcional y,
@@ -369,7 +403,11 @@ func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteV
 	if params.Desde != nil && params.Hasta != nil && params.Hasta.Before(*params.Desde) {
 		return nil, platformerrors.NewValidacion("hasta no puede ser anterior a desde")
 	}
-	filas, fr, err := c.m.lector.Viajes(ctx, nil, params.Desde, params.Hasta, enCurso)
+	alc, err := c.m.acotar(ctx, amb, subject)
+	if err != nil {
+		return nil, err
+	}
+	filas, fr, err := c.m.lector.Viajes(ctx, nil, alc, params.Desde, params.Hasta, enCurso)
 	if err != nil {
 		return nil, err
 	}
@@ -397,10 +435,15 @@ func (c *consultas) ReporteViajes(ctx context.Context, params repclient.ReporteV
 }
 
 func (c *consultas) ReporteEstados(ctx context.Context, params repclient.ReporteEstadosParams) (*repclient.ReporteEstados, error) {
-	if err := autorizarLectura(ctx); err != nil {
+	amb, subject, err := autorizarLectura(ctx)
+	if err != nil {
 		return nil, err
 	}
-	conteos, fr, err := c.m.lector.Estados(ctx, nil, params.Desde, params.Hasta)
+	alc, err := c.m.acotar(ctx, amb, subject)
+	if err != nil {
+		return nil, err
+	}
+	conteos, fr, err := c.m.lector.Estados(ctx, nil, alc, params.Desde, params.Hasta)
 	if err != nil {
 		return nil, err
 	}
