@@ -80,7 +80,7 @@ func TestLector(t *testing.T) {
 		proyecciones.ConRelojParaPrueba(lector, t1.Add(10*time.Minute))
 		desde, hasta := periodo()
 
-		filas, fr, err := lector.Viajes(ctx, ptr(tenantA), &desde, &hasta, false)
+		filas, fr, err := lector.Viajes(ctx, ptr(tenantA), nil, &desde, &hasta, false)
 		if err != nil {
 			t.Fatalf("Viajes: %v", err)
 		}
@@ -106,7 +106,7 @@ func TestLector(t *testing.T) {
 		proyecciones.ConRelojParaPrueba(lector, t1.Add(24*time.Hour))
 		desde, hasta := periodo()
 
-		_, fr, err := lector.Viajes(ctx, ptr(tenantA), &desde, &hasta, false)
+		_, fr, err := lector.Viajes(ctx, ptr(tenantA), nil, &desde, &hasta, false)
 		if err != nil {
 			t.Fatalf("Viajes: %v", err)
 		}
@@ -119,7 +119,7 @@ func TestLector(t *testing.T) {
 		lector := proyecciones.NewLector(pool, time.Hour)
 		desde, hasta := periodo()
 
-		conteos, _, err := lector.Estados(ctx, ptr(tenantA), desde, hasta)
+		conteos, _, err := lector.Estados(ctx, ptr(tenantA), nil, desde, hasta)
 		if err != nil {
 			t.Fatalf("Estados: %v", err)
 		}
@@ -137,7 +137,7 @@ func TestLector(t *testing.T) {
 		lector := proyecciones.NewLector(pool, time.Hour)
 		desde, hasta := periodo()
 
-		filas, fr, err := lector.Viajes(ctx, ptr(tenantB), &desde, &hasta, false)
+		filas, fr, err := lector.Viajes(ctx, ptr(tenantB), nil, &desde, &hasta, false)
 		if err != nil {
 			t.Fatalf("Viajes: %v", err)
 		}
@@ -158,7 +158,7 @@ func TestLector(t *testing.T) {
 		proyecciones.ConRelojParaPrueba(lector, t1.Add(70*time.Minute))
 		desde, hasta := periodo()
 
-		filas, fr, err := lector.Viajes(ctx, nil, &desde, &hasta, false)
+		filas, fr, err := lector.Viajes(ctx, nil, nil, &desde, &hasta, false)
 		if err != nil {
 			t.Fatalf("Viajes: %v", err)
 		}
@@ -172,7 +172,7 @@ func TestLector(t *testing.T) {
 			t.Fatalf("stale = true: la frescura global es t2, 40 min antes del reloj, bajo el techo de 1h")
 		}
 
-		_, frA, err := lector.Viajes(ctx, ptr(tenantA), &desde, &hasta, false)
+		_, frA, err := lector.Viajes(ctx, ptr(tenantA), nil, &desde, &hasta, false)
 		if err != nil {
 			t.Fatalf("Viajes A: %v", err)
 		}
@@ -185,7 +185,7 @@ func TestLector(t *testing.T) {
 		lector := proyecciones.NewLector(pool, time.Hour)
 		desde, hasta := periodo()
 
-		conteos, fr, err := lector.Estados(ctx, nil, desde, hasta)
+		conteos, fr, err := lector.Estados(ctx, nil, nil, desde, hasta)
 		if err != nil {
 			t.Fatalf("Estados: %v", err)
 		}
@@ -201,7 +201,7 @@ func TestLector(t *testing.T) {
 		lector := proyecciones.NewLector(pool, time.Minute)
 		desde, hasta := periodo()
 
-		filas, fr, err := lector.Viajes(ctx, ptr("cccccccc-cccc-cccc-cccc-cccccccccccc"), &desde, &hasta, false)
+		filas, fr, err := lector.Viajes(ctx, ptr("cccccccc-cccc-cccc-cccc-cccccccccccc"), nil, &desde, &hasta, false)
 		if err != nil {
 			t.Fatalf("Viajes: %v", err)
 		}
