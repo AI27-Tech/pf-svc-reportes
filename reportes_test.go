@@ -21,9 +21,14 @@ var (
 	claimsSinAudiencia = &auth.Claims{Rol: "cliente", TenantID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
 )
 
+func interno(rol string) *auth.Claims {
+	return &auth.Claims{Subject: "sub-" + rol, Audiencia: auth.AudienciaInterno, Rol: rol}
+}
+
 // TestReportesRechazaNoInterno fija que solo la audiencia Interno lee reportes
-// (DEC-022 #9): el cliente recibe 403 `prohibido` en las dos rutas y en la
-// fachada en proceso, y sin claims es 401. El rechazo ocurre antes de tocar la
+// (DEC-022 #9) y, dentro de ella, solo administrador y monitoreo (DEC-149): el
+// cliente y los roles internos sin el dashboard reciben 403 `prohibido` en las
+// dos rutas y en la fachada en proceso, y sin claims es 401. El rechazo ocurre antes de tocar la
 // base, por eso corre sin Postgres (el módulo no tiene pool).
 func TestReportesRechazaNoInterno(t *testing.T) {
 	m, err := New(Pools{}, Deps{})
@@ -44,6 +49,11 @@ func TestReportesRechazaNoInterno(t *testing.T) {
 		{"cliente: 403", claimsCliente, 403, "prohibido", platformerrors.CategoryProhibido},
 		{"audiencia vacía: 403", claimsSinAudiencia, 403, "prohibido", platformerrors.CategoryProhibido},
 		{"sin claims: 401", nil, 401, "no_autorizado", platformerrors.CategoryNoAutorizado},
+		// Interno sin el dashboard de monitoreo (DEC-149 #8, reportes.yaml de tracer.42).
+		{"jefe_operativo: 403", interno("jefe_operativo"), 403, "prohibido", platformerrors.CategoryProhibido},
+		{"ejecutivo: 403", interno("ejecutivo"), 403, "prohibido", platformerrors.CategoryProhibido},
+		{"reaccion: 403", interno("reaccion"), 403, "prohibido", platformerrors.CategoryProhibido},
+		{"rol desconocido: 403", interno("operador"), 403, "prohibido", platformerrors.CategoryProhibido},
 	}
 	for _, c := range casos {
 		ctx := context.Background()

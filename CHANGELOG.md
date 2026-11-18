@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## 2026-11-18 12:58 — alcance del dashboard por cliente (DEC-149, `tracer.42`)
+
+**Para quién:** el panel interno y el `bff`, que consumen `reporteViajes` y `reporteEstados`; y `pf-svc-core`, que debe cablear la proyección. El administrador ve lo mismo que antes. Monitorista, supervisor y coordinador ven solo los viajes de sus clientes efectivos que pasaron por `APROBADO`. **Cambia para `jefe_operativo`, `ejecutivo` y `reaccion`:** antes leían todo como audiencia Interno; ahora reciben `403 prohibido`, como fija `reportes.yaml` de `tracer.42` ("Otro rol responde 403") y la tabla de DEC-149 #8.
+
+**Resumen:** `reportes` proyecta `alcance.cambiado` de `identidad` en `reportes.alcance_sujeto`, indexado por `idp_subject` (DEC-149 #20, #22), y lo reconstruye al arrancar con `identidad.listarAlcances` (snapshot + cursor, ADR 26). Las dos lecturas filtran en SQL por `hecho_viaje.cliente_id` y por paso por `APROBADO`, así que filas, total, conteos por estado y frescura salen acotados.
+
+**Reglas aplicadas:**
+- Ámbito por rol (`internal/alcance/regla.go`): `administrador` todo; `monitorista`, `supervisor`, `coordinador` por clientes; cualquier otro rol interno `403`. La audiencia Cliente sigue en `403` y sin claims `401`.
+- Los clientes efectivos se buscan con el `sub` del token (`claims.Subject`). Un sujeto sin fila, o con conjunto vacío, no ve nada (falla cerrado). Un error de base se propaga como error, nunca como "todos".
+- "Pasó por `APROBADO`" pide evidencia positiva: `estado_actual = 'APROBADO'` o una transición de `hecho_transicion` que entra o sale de `APROBADO`. Cubre el viaje que nace en `APROBADO` (DEC-026) y excluye `SOLICITADO`, `RECHAZADO_POR_AI27` y la cancelación desde `SOLICITADO`.
+- La frescura (`proyeccion_al`) se calcula sobre los viajes visibles, igual que las filas.
+- `reportes` no tiene recurso por viaje: el `404` fuera de alcance del contrato no aplica aquí.
+
+**Proyección:**
+- Consumidor durable propio `reportes-alcance` (superficie amplia, solo `alcance.cambiado`). Cada evento es el conjunto completo: reentregas y desorden convergen por `cambiado_en`. Un payload sin `idp_subject`, sin `cambiado_en` o con ids que no son UUID se registra en log (sin payload) y se acusa sin aplicar.
+- Con `Deps.Alcances`, el worker se envuelve en la reconstrucción: suscribe, carga el snapshot (vacía a los sujetos ausentes, sin `DELETE`), aplica la continuación del cursor (un item vacío quita al sujeto) y queda not-ready hasta converger.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `pf-pkg-contracts` `tracer.36` → `tracer.42`. Sin renombres de enum (§8). `github.com/google/uuid` pasa a dependencia directa.
+- `migrations/reportes/0004_alcance_sujeto.sql`: tabla `reportes.alcance_sujeto` con `SELECT, INSERT, UPDATE` para `svc_reportes`; sin `DELETE`.
+- `internal/alcance/`: regla de rol, proyección, consumidor y reconstrucción.
+- `internal/proyecciones/proyecciones.go`: `Viajes`, `Estados` y la frescura reciben `*Alcance` (nil no acota).
+- `reportes.go`: `autorizarLectura` devuelve el ámbito; `acotar` resuelve los clientes después de validar los parámetros. `Deps.Alcances`, suscripción y `Workers()`.
+- `ports.go`: `AlcancesPort` (`listarAlcances`). `adapters/http/identidad/`: su adaptador HTTP.
+- `README.md` y comentario de `ci.yml`: arista a `identidad` ampliada a `listarAlcances`; tabla de alcance.
+- Pruebas: `internal/alcance/regla_test.go` (tabla de roles; parseo del evento, incluido payload sin `idp_subject`), `alcance_integration_test.go` (proyección desde evento, reconstrucción con snapshot + cursor, filtro por rol en las dos rutas y la fachada), `workers_test.go` (dos consumidores; not-ready con `Alcances`), `reportes_test.go` (403 de roles internos sin dashboard), `migrations/grants_integration_test.go` (grants de `alcance_sujeto`). `reportes_integration_test.go` usa `administrador` para "Interno ve todos". `proyecciones_integration_test.go` pasa `nil` de alcance.
+
+**Para `pf-svc-core`:** pasar `Deps.Alcances` (sub-fachada `Alcances()` de `identidad`) y arrancar el worker `reportes-alcance` con su readiness; subir el pin de `pf-svc-reportes`. La regla `restricted_edges` de `reglas.yaml` en `pf-pkg-platform-go` debe listar `listarAlcances`.
+
+**Verificación:** `gofmt -l .` vacío; `go vet ./...`; `go build ./...` y `go build ./cmd/api`; `go test ./...` sin BD y con `REPORTES_TEST_DB` contra Postgres 17 (0 saltadas); `go test -race` del paquete raíz y de `internal/alcance`; `arch-test@v0.1.1` OK. Comprobé que las pruebas detectan un filtro roto: quitar el paso por `APROBADO` o el filtro de cliente hace fallar `TestAlcanceFiltraDashboard`, y dejar ganar a un evento atrasado hace fallar `TestAlcanceProyeccionDesdeEvento`.
+
+**Archivos modificados:**
+- `go.mod`, `go.sum`, `ports.go`, `reportes.go`, `README.md`, `.github/workflows/ci.yml`, `CHANGELOG.md`
+- `adapters/http/identidad/identidad.go`
+- `internal/alcance/regla.go`, `internal/alcance/proyeccion.go`, `internal/alcance/consumidor.go`, `internal/alcance/reconstructor.go`, `internal/alcance/regla_test.go`
+- `internal/proyecciones/proyecciones.go`, `internal/proyecciones/proyecciones_integration_test.go`
+- `migrations/reportes/0004_alcance_sujeto.sql`, `migrations/grants_integration_test.go`
+- `alcance_integration_test.go`, `reportes_test.go`, `reportes_integration_test.go`, `workers_test.go`
+
 ## 2026-11-04 16:40 — platform-go v0.1.9: un token sin rol ni audiencia se rechaza
 
 **Para quién:** quien llama a `reportes` con un token. Un token verificado que no trae claim `audiencia` ni `rol` ahora recibe 401 `no_autorizado`; antes se tomaba como audiencia Interno, que no se acota por tenant (DEC-129). Los tokens con `audiencia` explícita, con `rol` `cliente` o con cualquiera de los roles internos se comportan igual que antes.

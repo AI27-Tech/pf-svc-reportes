@@ -5,6 +5,7 @@ import (
 	"time"
 
 	catclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/catalogos"
+	idclient "github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go/identidad"
 )
 
 // Puertos de salida que declara reportes COMO CONSUMIDOR (regla 2 de 00-indice,
@@ -65,3 +66,25 @@ type RevocacionPort interface {
 // en las fuentes; 2 s es el default común, igual que PresupuestoCatalogos, y no
 // es un número de negocio aprobado.
 const PresupuestoRevocacion = 2 * time.Second
+
+// AlcancesPort es la tercera operación de la arista RESTRINGIDA hacia
+// identidad: listarAlcances, el snapshot con cursor de los clientes efectivos
+// por sujeto con el que reportes reconstruye al arrancar su proyección de
+// alcance.cambiado (DEC-149 #20, patrón ADR 26). AMPLÍA DEC-051 (que restringía
+// la arista a listarRevocadas y obtenerSesion) por DEC-149 #20; la regla
+// restricted_edges de pf-pkg-platform-go/tools/arch-test/reglas.yaml debe
+// listarla. Es un puerto hermano de RevocacionPort, y no un método más, para no
+// romper los adaptadores de revocación existentes.
+//
+// Tipado con el contrato para que core pase directamente la sub-fachada
+// Alcances() de identidad (adaptador en proceso, en pf-svc-core). El HTTP vive
+// en adapters/http/identidad/. A diferencia de PresupuestoRevocacion, el
+// presupuesto de tiempo (2 s por llamada) lo aplica quien llama, la
+// reconstrucción de internal/alcance: así ambos adaptadores lo comparten (I3)
+// sin que core lo duplique.
+//
+// Sin cursor: el snapshot (solo sujetos con algún cliente). Con el cursor
+// devuelto: lo que cambió después, y un item con la lista vacía quita al sujeto.
+type AlcancesPort interface {
+	ListarAlcances(ctx context.Context, params idclient.ListarAlcancesParams) (*idclient.PaginaAlcances, error)
+}
