@@ -40,6 +40,7 @@ import (
 	platformerrors "github.com/AI27-Tech/pf-pkg-platform-go/errors"
 	"github.com/AI27-Tech/pf-pkg-platform-go/pgxpool"
 	"github.com/AI27-Tech/pf-pkg-platform-go/worker"
+	"github.com/AI27-Tech/pf-svc-reportes/internal/alcance"
 	"github.com/AI27-Tech/pf-svc-reportes/internal/consumidores"
 	"github.com/AI27-Tech/pf-svc-reportes/internal/proyecciones"
 	"github.com/AI27-Tech/pf-svc-reportes/internal/proyeccionpg"
@@ -76,6 +77,12 @@ type Deps struct {
 	// Revocacion es la arista restringida a identidad (DEC-051). Opcional en el
 	// esqueleto; sin ella la autorización corre sin proyección de tombstones.
 	Revocacion RevocacionPort
+	// Alcances es listarAlcances de identidad (DEC-149 #20): reconstruye al
+	// arrancar la proyección de alcance.cambiado. Solo se usa con Subscriber. Sin
+	// ella el consumidor arranca sin snapshot; sin Subscriber no hay proyección
+	// viva y monitorista, supervisor y coordinador no ven ningún viaje (falla
+	// cerrado).
+	Alcances AlcancesPort
 	// Subscriber es el bus durable del que reportes consume los eventos viaje.*
 	// para poblar sus proyecciones (ADR 29). Nil en arranque standalone sin bus:
 	// en ese caso Workers() no arranca el consumidor de proyecciones.
@@ -95,6 +102,14 @@ type Module struct {
 	// consumidor de proyecciones (viaje.* -> hecho_*). Nil sin Subscriber
 	// (standalone sin bus); en ese caso Workers() no lo devuelve.
 	consumidorProyecciones worker.Worker
+	// alcance es la proyección de alcance.cambiado (sujeto → clientes efectivos,
+	// DEC-149) en reportes.alcance_sujeto. La lee la autorización de las
+	// lecturas; la escribe consumidorAlcance. Siempre existe: sin consumidor
+	// queda vacía.
+	alcance *alcance.Proyeccion
+	// consumidorAlcance es el worker durable de alcance.cambiado, envuelto por la
+	// reconstrucción con listarAlcances si hay Deps.Alcances. nil sin Subscriber.
+	consumidorAlcance worker.Worker
 }
 
 // tiposViajeConProductor son los eventos viaje.* que operacion publica hoy y que
@@ -115,6 +130,7 @@ var tiposViajeConProductor = []string{
 func New(p Pools, d Deps) (*Module, error) {
 	m := &Module{pools: p, deps: d}
 	m.lector = proyecciones.NewLector(p.Reportes, d.TechoFrescura)
+	m.alcance = alcance.NuevaProyeccion(p.Reportes)
 
 	if d.Subscriber != nil {
 		ad := proyeccionpg.New(p.Reportes, slog.Default())
@@ -137,6 +153,21 @@ func New(p Pools, d Deps) (*Module, error) {
 			return nil, err
 		}
 		m.consumidorProyecciones = w
+
+		// Consumidor durable de alcance.cambiado (DEC-149 #20), con su propio
+		// durable: mantiene la proyección en Postgres, compartida por las
+		// réplicas. Con Alcances, la reconstrucción por snapshot + cursor lo
+		// envuelve y deja la réplica not-ready hasta converger (ADR 26 §4).
+		consAlc := alcance.NuevoConsumidor(m.alcance, slog.Default())
+		wa, err := d.Subscriber.Subscribe("reportes-alcance", bus.SensibilidadAmplia,
+			[]string{alcance.TipoAlcanceCambiado}, consAlc.Procesar)
+		if err != nil {
+			return nil, err
+		}
+		if d.Alcances != nil {
+			wa = alcance.NuevoReconstructor(wa, d.Alcances, m.alcance)
+		}
+		m.consumidorAlcance = wa
 	}
 
 	return m, nil
@@ -281,9 +312,10 @@ func codigoDe(c platformerrors.Category) string {
 }
 
 // Workers devuelve los workers embebidos del módulo (ADR 29 §6), cada uno con el
-// rol y pool de svc_reportes. En E6-T1 devuelve el consumidor durable de
-// proyecciones cuando la raíz inyectó un Subscriber (Deps.Subscriber); sin bus
-// (arranque standalone) la lista va vacía.
+// rol y pool de svc_reportes. Con Subscriber devuelve el consumidor durable de
+// proyecciones (E6-T1) y el de alcance.cambiado (DEC-149 #20); este último, con
+// Deps.Alcances, va envuelto por la reconstrucción y su Ready es not-ready
+// hasta converger. Sin bus (arranque standalone) la lista va vacía.
 //
 // Pendientes (no en este slice): el consumidor de sesion.revocada (suscripción
 // durable propia, DEC-057) y el reconciliador (R12).
@@ -291,6 +323,9 @@ func (m *Module) Workers() []worker.Worker {
 	var ws []worker.Worker
 	if m.consumidorProyecciones != nil {
 		ws = append(ws, m.consumidorProyecciones)
+	}
+	if m.consumidorAlcance != nil {
+		ws = append(ws, m.consumidorAlcance)
 	}
 	return ws
 }
