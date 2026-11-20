@@ -376,7 +376,7 @@ func (m *Module) Consultas() ConsultasAPI {
 //
 // Las dos aplican el alcance por cliente (DEC-149, tracer.42): administrador
 // todo; monitorista, supervisor y coordinador los viajes de sus clientes
-// efectivos que pasaron por APROBADO; otro rol 403. No hay recurso por viaje en
+// efectivos; otro rol 403. No hay recurso por viaje en
 // reportes, así que el "404 fuera de alcance" no aplica: un viaje ajeno
 // simplemente no aparece en las filas, el total, los conteos ni la frescura.
 type ConsultasAPI interface {

@@ -246,31 +246,22 @@ func TestAlcanceFiltraDashboard(t *testing.T) {
 		B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 		// Viajes de A.
 		a1 = "a1a1a1a1-0000-0000-0000-000000000001" // nace APROBADO (Operación), sin transiciones
-		a2 = "a2a2a2a2-0000-0000-0000-000000000002" // SOLICITADO
-		a3 = "a3a3a3a3-0000-0000-0000-000000000003" // SOLICITADO → APROBADO → ASIGNADO → EN_TRANSITO
-		a4 = "a4a4a4a4-0000-0000-0000-000000000004" // SOLICITADO → CANCELADO
-		a5 = "a5a5a5a5-0000-0000-0000-000000000005" // SOLICITADO → RECHAZADO_POR_AI27
-		a6 = "a6a6a6a6-0000-0000-0000-000000000006" // nace APROBADO → CANCELADO
+		a3 = "a3a3a3a3-0000-0000-0000-000000000003" // nace APROBADO → ASIGNADO → EN_TRANSITO
+		a6 = "a6a6a6a6-0000-0000-0000-000000000006" // nace APROBADO → CANCELADO_POR_CLIENTE
 		// Viaje de B, el más reciente (su aplicado_hasta no debe filtrarse a mon-a).
 		b1 = "b1b1b1b1-0000-0000-0000-000000000001" // nace APROBADO → ASIGNADO → EN_TRANSITO
 	)
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_viaje
 		(viaje_id, tenant_id, cliente_id, estado_actual, creado_en, aplicado_hasta) VALUES
 		('`+a1+`','`+A+`','`+A+`','APROBADO','2026-10-01T08:00:00Z','2026-10-01T08:00:00Z'),
-		('`+a2+`','`+A+`','`+A+`','SOLICITADO','2026-10-01T08:10:00Z','2026-10-01T08:10:00Z'),
 		('`+a3+`','`+A+`','`+A+`','EN_TRANSITO','2026-10-01T08:20:00Z','2026-10-01T09:20:00Z'),
-		('`+a4+`','`+A+`','`+A+`','CANCELADO','2026-10-01T08:30:00Z','2026-10-01T09:30:00Z'),
-		('`+a5+`','`+A+`','`+A+`','RECHAZADO_POR_AI27','2026-10-01T08:40:00Z','2026-10-01T09:40:00Z'),
-		('`+a6+`','`+A+`','`+A+`','CANCELADO','2026-10-01T08:50:00Z','2026-10-01T09:10:00Z'),
+		('`+a6+`','`+A+`','`+A+`','CANCELADO_POR_CLIENTE','2026-10-01T08:50:00Z','2026-10-01T09:10:00Z'),
 		('`+b1+`','`+B+`','`+B+`','EN_TRANSITO','2026-10-01T09:00:00Z','2026-10-01T11:00:00Z')`)
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_transicion
 		(viaje_id, tenant_id, de_estado, a_estado, ocurrido_en, evento_id) VALUES
-		('`+a3+`','`+A+`','SOLICITADO','APROBADO','2026-10-01T09:00:00Z',gen_random_uuid()),
 		('`+a3+`','`+A+`','APROBADO','ASIGNADO','2026-10-01T09:10:00Z',gen_random_uuid()),
 		('`+a3+`','`+A+`','ASIGNADO','EN_TRANSITO','2026-10-01T09:20:00Z',gen_random_uuid()),
-		('`+a4+`','`+A+`','SOLICITADO','CANCELADO','2026-10-01T09:30:00Z',gen_random_uuid()),
-		('`+a5+`','`+A+`','SOLICITADO','RECHAZADO_POR_AI27','2026-10-01T09:40:00Z',gen_random_uuid()),
-		('`+a6+`','`+A+`','APROBADO','CANCELADO','2026-10-01T09:10:00Z',gen_random_uuid()),
+		('`+a6+`','`+A+`','APROBADO','CANCELADO_POR_CLIENTE','2026-10-01T09:10:00Z',gen_random_uuid()),
 		('`+b1+`','`+B+`','APROBADO','ASIGNADO','2026-10-01T10:00:00Z',gen_random_uuid()),
 		('`+b1+`','`+B+`','ASIGNADO','EN_TRANSITO','2026-10-01T11:00:00Z',gen_random_uuid())`)
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.alcance_sujeto (idp_subject, clientes_ids, cambiado_en) VALUES
@@ -295,16 +286,16 @@ func TestAlcanceFiltraDashboard(t *testing.T) {
 		al              *time.Time // proyeccion_al; nil = null
 	}
 	todos := esperado{
-		viajes:  []string{a1, a2, a3, a4, a5, a6, b1},
-		enCurso: []string{a1, a2, a3, b1},
-		estados: map[string]int{"APROBADO": 1, "ASIGNADO": 2, "EN_TRANSITO": 2, "CANCELADO": 2, "RECHAZADO_POR_AI27": 1},
+		viajes:  []string{a1, a3, a6, b1},
+		enCurso: []string{a1, a3, b1},
+		estados: map[string]int{"ASIGNADO": 2, "EN_TRANSITO": 2, "CANCELADO_POR_CLIENTE": 1},
 		al:      hora(11, 0),
 	}
 	soloA := esperado{
 		viajes:  []string{a1, a3, a6},
 		enCurso: []string{a1, a3},
-		estados: map[string]int{"APROBADO": 1, "ASIGNADO": 1, "EN_TRANSITO": 1, "CANCELADO": 1},
-		al:      hora(9, 20), // MAX de a1, a3, a6; no el de b1 ni el de a5
+		estados: map[string]int{"ASIGNADO": 1, "EN_TRANSITO": 1, "CANCELADO_POR_CLIENTE": 1},
+		al:      hora(9, 20), // MAX de a1, a3, a6; no el de b1
 	}
 	nada := esperado{estados: map[string]int{}}
 	casos := []struct {
@@ -313,11 +304,11 @@ func TestAlcanceFiltraDashboard(t *testing.T) {
 		quiere esperado
 	}{
 		{"administrador: todo", como("adm-1", "administrador"), todos},
-		{"monitorista de A: su cliente desde APROBADO", como("mon-a", "monitorista"), soloA},
+		{"monitorista de A: su cliente", como("mon-a", "monitorista"), soloA},
 		{"supervisor de A y B: la unión", como("sup-ab", "supervisor"), esperado{
 			viajes:  []string{a1, a3, a6, b1},
 			enCurso: []string{a1, a3, b1},
-			estados: map[string]int{"APROBADO": 1, "ASIGNADO": 2, "EN_TRANSITO": 2, "CANCELADO": 1},
+			estados: map[string]int{"ASIGNADO": 2, "EN_TRANSITO": 2, "CANCELADO_POR_CLIENTE": 1},
 			al:      hora(11, 0),
 		}},
 		{"coordinador con el alcance de A", como("mon-a", "coordinador"), soloA},

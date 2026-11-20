@@ -58,13 +58,13 @@ func TestLector(t *testing.T) {
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_viaje
 		(viaje_id, tenant_id, cliente_id, estado_actual, creado_en, aplicado_hasta) VALUES
 		('`+viajeA1+`','`+tenantA+`','`+tenantA+`','APROBADO','`+t0.Format(time.RFC3339)+`','`+t0.Format(time.RFC3339)+`'),
-		('`+viajeA2+`','`+tenantA+`','`+tenantA+`','SOLICITADO','`+t1.Format(time.RFC3339)+`','`+t1.Format(time.RFC3339)+`'),
+		('`+viajeA2+`','`+tenantA+`','`+tenantA+`','ASIGNADO','`+t1.Format(time.RFC3339)+`','`+t1.Format(time.RFC3339)+`'),
 		('`+viajeB1+`','`+tenantB+`','`+tenantB+`','APROBADO','`+t0.Format(time.RFC3339)+`','`+t0.Format(time.RFC3339)+`'),
-		('`+viajeB2+`','`+tenantB+`','`+tenantB+`','SOLICITADO','`+t2.Format(time.RFC3339)+`','`+t2.Format(time.RFC3339)+`')`)
+		('`+viajeB2+`','`+tenantB+`','`+tenantB+`','ASIGNADO','`+t2.Format(time.RFC3339)+`','`+t2.Format(time.RFC3339)+`')`)
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_transicion
 		(viaje_id, tenant_id, de_estado, a_estado, ocurrido_en, evento_id) VALUES
-		('`+viajeA1+`','`+tenantA+`','SOLICITADO','APROBADO','`+t1.Format(time.RFC3339)+`','`+viajeA1+`'),
-		('`+viajeB1+`','`+tenantB+`','SOLICITADO','APROBADO','`+t0.Format(time.RFC3339)+`','`+viajeB1+`')`)
+		('`+viajeA1+`','`+tenantA+`','APROBADO','ASIGNADO','`+t1.Format(time.RFC3339)+`','`+viajeA1+`'),
+		('`+viajeB1+`','`+tenantB+`','APROBADO','ASIGNADO','`+t0.Format(time.RFC3339)+`','`+viajeB1+`')`)
 
 	raw, closeRaw := dbtest.PoolAs(t, ctx, "svc_reportes", "reportes")
 	defer closeRaw()
@@ -123,7 +123,7 @@ func TestLector(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Estados: %v", err)
 		}
-		// A tiene una sola transición (-> APROBADO); la de B no debe contarse.
+		// A tiene una sola transición (-> ASIGNADO); la de B no debe contarse.
 		total := 0
 		for _, c := range conteos {
 			total += c.Conteo
@@ -189,8 +189,8 @@ func TestLector(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Estados: %v", err)
 		}
-		if len(conteos) != 1 || conteos[0].Estado != "APROBADO" || conteos[0].Conteo != 2 {
-			t.Fatalf("conteos = %+v, se esperaba [{APROBADO 2}] (una transición de A y una de B)", conteos)
+		if len(conteos) != 1 || conteos[0].Estado != "ASIGNADO" || conteos[0].Conteo != 2 {
+			t.Fatalf("conteos = %+v, se esperaba [{ASIGNADO 2}] (una transición de A y una de B)", conteos)
 		}
 		if !fr.AplicadoHasta.Equal(t2) {
 			t.Fatalf("proyeccion_al = %v, se esperaba %v (global)", fr.AplicadoHasta, t2)
