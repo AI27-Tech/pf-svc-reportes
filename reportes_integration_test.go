@@ -52,12 +52,12 @@ func TestReportesInternoVeTodos(t *testing.T) {
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_viaje
 		(viaje_id, tenant_id, cliente_id, estado_actual, creado_en, aplicado_hasta) VALUES
 		('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','APROBADO','2026-10-01T08:00:00Z','2026-10-01T08:00:00Z'),
-		('22222222-2222-2222-2222-222222222222','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','SOLICITADO','2026-10-01T09:00:00Z','2026-10-01T09:00:00Z'),
+		('22222222-2222-2222-2222-222222222222','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','ASIGNADO','2026-10-01T09:00:00Z','2026-10-01T09:00:00Z'),
 		('33333333-3333-3333-3333-333333333333','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','APROBADO','2026-10-01T09:30:00Z','2026-10-01T09:30:00Z')`)
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_transicion
 		(viaje_id, tenant_id, de_estado, a_estado, ocurrido_en, evento_id) VALUES
-		('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','SOLICITADO','APROBADO','2026-10-01T09:00:00Z','11111111-1111-1111-1111-111111111111'),
-		('33333333-3333-3333-3333-333333333333','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','SOLICITADO','APROBADO','2026-10-01T09:40:00Z','33333333-3333-3333-3333-333333333333')`)
+		('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','APROBADO','ASIGNADO','2026-10-01T09:00:00Z','11111111-1111-1111-1111-111111111111'),
+		('33333333-3333-3333-3333-333333333333','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','APROBADO','ASIGNADO','2026-10-01T09:40:00Z','33333333-3333-3333-3333-333333333333')`)
 
 	raw, closeRaw := dbtest.PoolAs(t, ctx, "svc_reportes", "reportes")
 	defer closeRaw()
@@ -104,8 +104,8 @@ func TestReportesInternoVeTodos(t *testing.T) {
 	}
 	checkEstados := func(t *testing.T, rep *repclient.ReporteEstados) {
 		t.Helper()
-		if len(rep.Conteos) != 1 || rep.Conteos[0].Estado != "APROBADO" || rep.Conteos[0].Conteo != 2 {
-			t.Fatalf("conteos = %+v, se esperaba [{APROBADO 2}]", rep.Conteos)
+		if len(rep.Conteos) != 1 || rep.Conteos[0].Estado != "ASIGNADO" || rep.Conteos[0].Conteo != 2 {
+			t.Fatalf("conteos = %+v, se esperaba [{ASIGNADO 2}]", rep.Conteos)
 		}
 	}
 
@@ -144,25 +144,21 @@ func TestReportesInternoVeTodos(t *testing.T) {
 		}
 	})
 
-	// «Viajes en curso» (E6-HU-025, DT-10). Se siembran los cuatro estados
-	// terminales dentro del periodo y un viaje EN_TRANSITO creado un mes antes: el
+	// «Viajes en curso» (E6-HU-025, DT-10). Se siembran los dos estados
+	// terminales (CERRADO y CANCELADO_POR_CLIENTE) dentro del periodo y un viaje EN_TRANSITO creado un mes antes: el
 	// filtro debe excluir los terminales y no perder al viaje viejo en curso. Se
 	// siembra después de los subtests anteriores, que cuentan solo los tres de arriba.
 	const (
 		a1, a2, b1 = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"
 		cerrado    = "44444444-4444-4444-4444-444444444444"
 		viejo      = "55555555-5555-5555-5555-555555555555" // EN_TRANSITO, creado en septiembre
-		cancelado  = "66666666-6666-6666-6666-666666666666"
-		rechazoAI  = "77777777-7777-7777-7777-777777777777"
-		rechazoCli = "88888888-8888-8888-8888-888888888888"
+		cancelado  = "66666666-6666-6666-6666-666666666666" // CANCELADO_POR_CLIENTE
 	)
 	dbtest.Exec(t, ctx, admin, `INSERT INTO reportes.hecho_viaje
 		(viaje_id, tenant_id, cliente_id, estado_actual, creado_en, aplicado_hasta) VALUES
 		('`+cerrado+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','CERRADO','2026-10-01T10:00:00Z','2026-10-01T10:00:00Z'),
 		('`+viejo+`','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','EN_TRANSITO','2026-09-01T08:00:00Z','2026-09-01T08:00:00Z'),
-		('`+cancelado+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','CANCELADO','2026-10-01T10:10:00Z','2026-10-01T10:10:00Z'),
-		('`+rechazoAI+`','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','RECHAZADO_POR_AI27','2026-10-01T10:20:00Z','2026-10-01T10:20:00Z'),
-		('`+rechazoCli+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','RECHAZADO_POR_CLIENTE','2026-10-01T10:30:00Z','2026-10-01T10:30:00Z')`)
+		('`+cancelado+`','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','CANCELADO_POR_CLIENTE','2026-10-01T10:10:00Z','2026-10-01T10:10:00Z')`)
 
 	consulta := func(ctx context.Context, query string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -189,7 +185,7 @@ func TestReportesInternoVeTodos(t *testing.T) {
 		return got
 	}
 	// Con rango y sin en_curso entran todos los estados del periodo, terminales incluidos.
-	todosDeOctubre := []string{a1, a2, b1, cerrado, cancelado, rechazoAI, rechazoCli}
+	todosDeOctubre := []string{a1, a2, b1, cerrado, cancelado}
 
 	for _, c := range []struct {
 		nombre string

@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-11-20 14:04 — adopta `tracer.45`: estados del viaje sin la solicitud (ADR 38)
+
+**Para quién:** el panel interno y el `bff`, que consumen `reporteViajes` y `reporteEstados`. Con `tracer.45` el viaje ya no pasa por `SOLICITADO`, `RECHAZADO_POR_AI27` ni `RECHAZADO_POR_CLIENTE`, y `CANCELADO` se llama `CANCELADO_POR_CLIENTE`. Los reportes devuelven el `estado` tal como llega en `viaje.estado_cambiado`, así que ese es el nombre que verán los consumidores.
+
+**Resumen:** sube el pin de contratos (`.42` → `.45`, pasa por `.43` y `.44`, aditivos) y retira la regla "pasó por `APROBADO`" del alcance de monitoreo: todo viaje nace en `APROBADO`, así que ya no filtraba nada.
+
+**Cambios:**
+- `go.mod`/`go.sum`: `pf-pkg-contracts` `tracer.42` → `tracer.45`. `go build ./...` compila sin cambios de código (§8: sin renombres de constantes Go; el enum de estados se consume por `estados.EstadosViaje`).
+- `internal/proyecciones/proyecciones.go`: se elimina `pasoPorAprobadoSQL` y su uso en `Viajes`, `Estados` y `frescura`; el alcance filtra solo por `cliente_id`. Se actualizan los comentarios.
+- `internal/alcance/regla.go`, `reportes.go`, `README.md`: texto del alcance sin "que pasaron por `APROBADO`".
+- Pruebas: `internal/proyecciones/en_curso_test.go` (nuevo: `CANCELADO_POR_CLIENTE` es terminal y los estados retirados no cuentan «en curso»); `internal/proyeccionpg/adaptador_integration_test.go` (un `viaje.estado_cambiado` a `CANCELADO_POR_CLIENTE` llega a `hecho_viaje`; el viaje nace en `APROBADO`); `reportes_integration_test.go` y `alcance_integration_test.go` (fixtures con los estados nuevos; el filtro «en curso» excluye `CANCELADO_POR_CLIENTE`); `internal/proyecciones/proyecciones_integration_test.go` y `migrations/grants_integration_test.go` (fixtures).
+
+**Datos existentes (DEC-148 #60):** no hay migración de datos. Las bases dev/demo con filas de V1 en `hecho_viaje`/`hecho_transicion` con `SOLICITADO`, `RECHAZADO_*` o `CANCELADO` se **reinician**; no hay datos de producción de V1 que preservar (DEC-148 #7). Sin reinicio, un monitorista vería esas filas en el dashboard de su cliente y `CANCELADO` no contaría como terminal en «en curso». El SQL borrador de limpieza que se discutió en el PR #34 queda solo como alternativa documentada y no se ejecuta ni se versiona en `migrations/`.
+
 ## 2026-11-18 12:58 — alcance del dashboard por cliente (DEC-149, `tracer.42`)
 
 **Para quién:** el panel interno y el `bff`, que consumen `reporteViajes` y `reporteEstados`; y `pf-svc-core`, que debe cablear la proyección. El administrador ve lo mismo que antes. Monitorista, supervisor y coordinador ven solo los viajes de sus clientes efectivos que pasaron por `APROBADO`. **Cambia para `jefe_operativo`, `ejecutivo` y `reaccion`:** antes leían todo como audiencia Interno; ahora reciben `403 prohibido`, como fija `reportes.yaml` de `tracer.42` ("Otro rol responde 403") y la tabla de DEC-149 #8.

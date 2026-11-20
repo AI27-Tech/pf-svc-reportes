@@ -50,15 +50,16 @@ Materializadas en este scaffold (migración `0001_init.sql`):
 | Rol | Ve |
 |---|---|
 | `administrador` | todos los viajes |
-| `monitorista`, `supervisor`, `coordinador` | los viajes de sus clientes efectivos que pasaron por `APROBADO` |
+| `monitorista`, `supervisor`, `coordinador` | los viajes de sus clientes efectivos |
 | cualquier otro (`jefe_operativo`, `ejecutivo`, `reaccion`, …) y la audiencia Cliente | `403` |
 
 - Los clientes efectivos salen de `reportes.alcance_sujeto`, buscados por el
   `sub` del token. Un sujeto sin fila no ve nada (falla cerrado).
 - El filtro va en la consulta: filas, total, conteos por estado y frescura
   salen acotados.
-- "Pasó por `APROBADO`" pide evidencia en la proyección: estado actual
-  `APROBADO` o una transición que entra o sale de `APROBADO`.
+- Datos de V1: las filas proyectadas con estados retirados (`SOLICITADO`,
+  `RECHAZADO_*`, `CANCELADO`) no se migran; las bases dev/demo se reinician
+  (DEC-148 #60). No hay datos de producción de V1.
 - La proyección se mantiene con un consumidor durable propio
   (`reportes-alcance`). Con `Deps.Alcances`, la reconstrucción al arrancar
   (snapshot + cursor) lo envuelve y deja el worker not-ready hasta converger.

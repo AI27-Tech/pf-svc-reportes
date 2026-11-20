@@ -12,8 +12,9 @@
 // reportes definidos, nunca SQL.
 //
 // Además del tenant, cada lectura recibe el alcance del monitoreo (DEC-149): con
-// él, solo cuentan los viajes de los clientes efectivos del sujeto que pasaron
-// por APROBADO. El filtro va en el WHERE, así que filas, total, conteos por
+// él, solo cuentan los viajes de los clientes efectivos del sujeto. Todo viaje
+// nace en APROBADO (ADR 38), así que no hay filtro por estado de entrada. El
+// filtro va en el WHERE, así que filas, total, conteos por
 // estado y frescura salen ya acotados.
 package proyecciones
 
@@ -59,7 +60,7 @@ type ConteoEstado struct {
 }
 
 // Alcance acota una lectura al alcance del monitoreo (DEC-149 #5, #6, #18): solo
-// los viajes cuyo cliente está en Clientes y que pasaron por APROBADO. Un
+// los viajes cuyo cliente está en Clientes. Un
 // *Alcance nil no acota (administrador). Un Alcance sin clientes no ve nada.
 type Alcance struct {
 	Clientes []uuid.UUID
@@ -77,18 +78,6 @@ func clientesSQL(a *Alcance) []uuid.UUID {
 	}
 	return a.Clientes
 }
-
-// pasoPorAprobadoSQL pide evidencia POSITIVA en la proyección de que el viaje
-// `h` (reportes.hecho_viaje) estuvo en APROBADO: su estado actual, o una
-// transición que entra o sale de APROBADO (hecho_transicion trae de_estado y
-// a_estado de cada viaje.estado_cambiado). Cubre al viaje que nace en APROBADO
-// (DEC-026) y al que llega desde SOLICITADO, y excluye SOLICITADO,
-// RECHAZADO_POR_AI27 y la cancelación desde SOLICITADO sin listar la máquina de
-// estados. Si falta una transición en la proyección, el viaje no se ve: falla
-// cerrado.
-const pasoPorAprobadoSQL = `(h.estado_actual = 'APROBADO' OR EXISTS (
-	SELECT 1 FROM reportes.hecho_transicion t
-	 WHERE t.viaje_id = h.viaje_id AND 'APROBADO' IN (t.de_estado, t.a_estado)))`
 
 // Lector ejecuta las consultas de lectura sobre el pool de svc_reportes. Zero
 // value no usable: construir con NewLector. El techo de frescura se inyecta
@@ -143,7 +132,7 @@ func (l *Lector) Viajes(ctx context.Context, tenantID *string, alc *Alcance, des
 		    AND ($2::timestamptz IS NULL OR h.creado_en >= $2)
 		    AND ($3::timestamptz IS NULL OR h.creado_en <= $3)
 		    AND ($4::text[] IS NULL OR h.estado_actual = ANY($4))
-		    AND ($5::uuid[] IS NULL OR (h.cliente_id = ANY($5) AND `+pasoPorAprobadoSQL+`))
+		    AND ($5::uuid[] IS NULL OR h.cliente_id = ANY($5))
 		  ORDER BY h.creado_en`,
 		tenantID, desde, hasta, estadosFiltro, clientesSQL(alc),
 	)
@@ -183,7 +172,7 @@ func (l *Lector) Estados(ctx context.Context, tenantID *string, alc *Alcance, de
 		  WHERE ($1::text IS NULL OR x.tenant_id = $1) AND x.ocurrido_en >= $2 AND x.ocurrido_en <= $3
 		    AND ($4::uuid[] IS NULL OR EXISTS (
 		        SELECT 1 FROM reportes.hecho_viaje h
-		         WHERE h.viaje_id = x.viaje_id AND h.cliente_id = ANY($4) AND `+pasoPorAprobadoSQL+`))
+		         WHERE h.viaje_id = x.viaje_id AND h.cliente_id = ANY($4)))
 		  GROUP BY x.a_estado
 		  ORDER BY x.a_estado`,
 		tenantID, desde, hasta, clientesSQL(alc),
@@ -238,7 +227,7 @@ func (l *Lector) frescura(ctx context.Context, tenantID *string, alc *Alcance) (
 	err := l.pool.QueryRow(ctx,
 		`SELECT MAX(h.aplicado_hasta) FROM reportes.hecho_viaje h
 		  WHERE ($1::text IS NULL OR h.tenant_id = $1)
-		    AND ($2::uuid[] IS NULL OR (h.cliente_id = ANY($2) AND `+pasoPorAprobadoSQL+`))`,
+		    AND ($2::uuid[] IS NULL OR h.cliente_id = ANY($2))`,
 		tenantID, clientesSQL(alc),
 	).Scan(&aplicadoHasta)
 	if err != nil {

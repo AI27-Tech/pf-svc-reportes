@@ -9,11 +9,12 @@ go 1.27
 // identidad para revocación (DEC-051), ambas HTTP vía cliente generado, que no
 // implican requerir esos módulos.
 //
-// El pin de contracts es v0.1.0-tracer.42: trae alcance.cambiado e
+// El pin de contracts es v0.1.0-tracer.45: trae alcance.cambiado e
 // identidad.listarAlcances con idp_subject (DEC-149 #20, #22), con los que
-// reportes acota el dashboard por cliente.
+// reportes acota el dashboard por cliente, y la máquina de estados del viaje
+// sin los estados de la solicitud (ADR 38).
 require (
-	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.42
+	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.45
 	github.com/AI27-Tech/pf-pkg-platform-go v0.1.9
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
