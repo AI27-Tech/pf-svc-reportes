@@ -12,7 +12,7 @@
 - `internal/alcance/regla.go`, `reportes.go`, `README.md`: texto del alcance sin "que pasaron por `APROBADO`".
 - Pruebas: `internal/proyecciones/en_curso_test.go` (nuevo: `CANCELADO_POR_CLIENTE` es terminal y los estados retirados no cuentan «en curso»); `internal/proyeccionpg/adaptador_integration_test.go` (un `viaje.estado_cambiado` a `CANCELADO_POR_CLIENTE` llega a `hecho_viaje`; el viaje nace en `APROBADO`); `reportes_integration_test.go` y `alcance_integration_test.go` (fixtures con los estados nuevos; el filtro «en curso» excluye `CANCELADO_POR_CLIENTE`); `internal/proyecciones/proyecciones_integration_test.go` y `migrations/grants_integration_test.go` (fixtures).
 
-**Datos existentes:** las filas ya proyectadas con `SOLICITADO`, `RECHAZADO_*` o `CANCELADO` no se migran. Sin el filtro, un monitorista las vería en el dashboard de su cliente, y `CANCELADO` ya no cuenta como terminal en «en curso». Ver el PR.
+**Datos existentes (DEC-148 #60):** no hay migración de datos. Las bases dev/demo con filas de V1 en `hecho_viaje`/`hecho_transicion` con `SOLICITADO`, `RECHAZADO_*` o `CANCELADO` se **reinician**; no hay datos de producción de V1 que preservar (DEC-148 #7). Sin reinicio, un monitorista vería esas filas en el dashboard de su cliente y `CANCELADO` no contaría como terminal en «en curso». El SQL borrador de limpieza que se discutió en el PR #34 queda solo como alternativa documentada y no se ejecuta ni se versiona en `migrations/`.
 
 ## 2026-11-18 12:58 — alcance del dashboard por cliente (DEC-149, `tracer.42`)
 

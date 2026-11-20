@@ -57,6 +57,9 @@ Materializadas en este scaffold (migración `0001_init.sql`):
   `sub` del token. Un sujeto sin fila no ve nada (falla cerrado).
 - El filtro va en la consulta: filas, total, conteos por estado y frescura
   salen acotados.
+- Datos de V1: las filas proyectadas con estados retirados (`SOLICITADO`,
+  `RECHAZADO_*`, `CANCELADO`) no se migran; las bases dev/demo se reinician
+  (DEC-148 #60). No hay datos de producción de V1.
 - La proyección se mantiene con un consumidor durable propio
   (`reportes-alcance`). Con `Deps.Alcances`, la reconstrucción al arrancar
   (snapshot + cursor) lo envuelve y deja el worker not-ready hasta converger.
