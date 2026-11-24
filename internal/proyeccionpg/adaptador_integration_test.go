@@ -73,7 +73,7 @@ func TestProyeccion(t *testing.T) {
 
 	// --- viaje.creado de dos tenants distintos ---
 	procesar(t, ctx, c, evCreadoA, "viaje.creado", viajeA, map[string]any{
-		"viaje_id": viajeA, "cliente_id": tenantA, "estado": "SOLICITADO", "creado_en": ahora,
+		"viaje_id": viajeA, "cliente_id": tenantA, "estado": "APROBADO", "creado_en": ahora,
 	})
 	procesar(t, ctx, c, evCreadoB, "viaje.creado", viajeB, map[string]any{
 		"viaje_id": viajeB, "cliente_id": tenantB, "estado": "APROBADO", "creado_en": ahora,
@@ -89,14 +89,22 @@ func TestProyeccion(t *testing.T) {
 
 	// --- viaje.estado_cambiado: actualiza estado e inserta la transición ---
 	procesar(t, ctx, c, evEstadoA, "viaje.estado_cambiado", viajeA, map[string]any{
-		"viaje_id": viajeA, "de_estado": "SOLICITADO", "a_estado": "APROBADO", "cambiado_en": ahora,
+		"viaje_id": viajeA, "de_estado": "APROBADO", "a_estado": "ASIGNADO", "cambiado_en": ahora,
 	})
-	if got := scanEstado(t, ctx, raw, viajeA); got != "APROBADO" {
-		t.Fatalf("hecho_viaje[A].estado_actual = %q; se esperaba APROBADO", got)
+	if got := scanEstado(t, ctx, raw, viajeA); got != "ASIGNADO" {
+		t.Fatalf("hecho_viaje[A].estado_actual = %q; se esperaba ASIGNADO", got)
 	}
 	tv, te := scanTransicion(t, ctx, raw, viajeA)
-	if tv != tenantA || te != "APROBADO" {
-		t.Fatalf("hecho_transicion[A] = (tenant %q, a_estado %q); se esperaba (%q, APROBADO)", tv, te, tenantA)
+	if tv != tenantA || te != "ASIGNADO" {
+		t.Fatalf("hecho_transicion[A] = (tenant %q, a_estado %q); se esperaba (%q, ASIGNADO)", tv, te, tenantA)
+	}
+
+	// --- cancelación del cliente: el estado terminal llega a la proyección ---
+	procesar(t, ctx, c, "e0000000-0000-0000-0000-0000000000b2", "viaje.estado_cambiado", viajeB, map[string]any{
+		"viaje_id": viajeB, "de_estado": "APROBADO", "a_estado": "CANCELADO_POR_CLIENTE", "cambiado_en": ahora,
+	})
+	if got := scanEstado(t, ctx, raw, viajeB); got != "CANCELADO_POR_CLIENTE" {
+		t.Fatalf("hecho_viaje[B].estado_actual = %q; se esperaba CANCELADO_POR_CLIENTE", got)
 	}
 
 	// --- viaje.asignado: vuelca la escolta a unidades_ids ---
@@ -117,7 +125,7 @@ func TestProyeccion(t *testing.T) {
 
 	// --- idempotencia: reprocesar el estado_cambiado no duplica la transición ---
 	procesar(t, ctx, c, evEstadoA, "viaje.estado_cambiado", viajeA, map[string]any{
-		"viaje_id": viajeA, "de_estado": "SOLICITADO", "a_estado": "APROBADO", "cambiado_en": ahora,
+		"viaje_id": viajeA, "de_estado": "APROBADO", "a_estado": "ASIGNADO", "cambiado_en": ahora,
 	})
 	if n := contarTransiciones(t, ctx, raw, viajeA); n != 1 {
 		t.Fatalf("hecho_transicion[A] tiene %d filas tras reprocesar; se esperaba 1 (idempotencia)", n)
