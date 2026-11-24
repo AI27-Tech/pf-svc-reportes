@@ -14,7 +14,7 @@ go 1.27
 // reportes acota el dashboard por cliente, y la máquina de estados del viaje
 // sin los estados de la solicitud (ADR 38).
 require (
-	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.45
+	github.com/AI27-Tech/pf-pkg-contracts/packages/api-client-go v0.1.0-tracer.46
 	github.com/AI27-Tech/pf-pkg-platform-go v0.1.9
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
