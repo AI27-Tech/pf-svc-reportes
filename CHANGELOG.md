@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 2026-11-24 — Adopta api-client-go `v0.1.0-tracer.46` (bump por scripts/bump-contratos.sh)
+
+**Cambios:**
+- `go.mod` sube `api-client-go` de `v0.1.0-tracer.45` a `v0.1.0-tracer.46` (ref `v0.1.0-tracer.46`). `go build` y `go vet` sin cambios de código.
+
 ## 2026-11-20 14:04 — adopta `tracer.45`: estados del viaje sin la solicitud (ADR 38)
 
 **Para quién:** el panel interno y el `bff`, que consumen `reporteViajes` y `reporteEstados`. Con `tracer.45` el viaje ya no pasa por `SOLICITADO`, `RECHAZADO_POR_AI27` ni `RECHAZADO_POR_CLIENTE`, y `CANCELADO` se llama `CANCELADO_POR_CLIENTE`. Los reportes devuelven el `estado` tal como llega en `viaje.estado_cambiado`, así que ese es el nombre que verán los consumidores.
