@@ -4,7 +4,7 @@
 // clientes efectivos) con la que se resuelve en servidor (DEC-053 #3).
 //
 // La regla de rol (regla.go) es pura. El filtro de viajes (cliente del viaje
-// entre los clientes efectivos y paso por APROBADO) va en SQL, en
+// entre los clientes efectivos) va en SQL, en
 // internal/proyecciones, para no filtrar en memoria filas, totales ni conteos.
 // La proyección (proyeccion.go) vive en Postgres, en el esquema reportes: el
 // consumidor de alcance.cambiado es durable y comparte grupo entre réplicas, así
@@ -22,8 +22,9 @@ const (
 	Prohibido Ambito = iota
 	// Todos es el alcance global (administrador).
 	Todos
-	// PorClientes son los viajes de los clientes efectivos del sujeto que
-	// pasaron por APROBADO (DEC-149 #5, #6, #18).
+	// PorClientes son los viajes de los clientes efectivos del sujeto
+	// (DEC-149 #5, #6, #18). Todo viaje nace en APROBADO (ADR 38): no hay
+	// filtro por estado de entrada.
 	PorClientes
 )
 

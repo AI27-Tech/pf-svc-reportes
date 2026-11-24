@@ -84,10 +84,10 @@ func TestGrants(t *testing.T) {
 
 	// Proyección por viaje: se inserta y luego avanza con cada evento (UPDATE).
 	mustExec(t, ctx, pool,
-		fmt.Sprintf(`INSERT INTO reportes.hecho_viaje (viaje_id, tenant_id, estado_actual) VALUES ('%s', 't1', 'SOLICITADO')`, viajeID),
+		fmt.Sprintf(`INSERT INTO reportes.hecho_viaje (viaje_id, tenant_id, estado_actual) VALUES ('%s', 't1', 'APROBADO')`, viajeID),
 		"svc_reportes debe poder insertar la proyección del viaje")
 	mustExec(t, ctx, pool,
-		`UPDATE reportes.hecho_viaje SET estado_actual = 'APROBADO', aplicado_hasta = now() WHERE viaje_id = '`+viajeID+`'`,
+		`UPDATE reportes.hecho_viaje SET estado_actual = 'ASIGNADO', aplicado_hasta = now() WHERE viaje_id = '`+viajeID+`'`,
 		"svc_reportes debe poder avanzar la proyección del viaje (UPDATE)")
 
 	// Grano fino de transición: append-only.
